@@ -1,10 +1,12 @@
 /* ============================================================
-   TAZOS DORADOS · app.js v2.1
-   FIXES:
-   - FAB solo visible en pantalla Roster (cuando es tesorero)
-   - showPlayerForm ahora abre el modal (antes no lo abría)
-   - Jugadores desactivados visibles al final del roster con etiqueta
-   - Posibilidad de reactivar jugador desde su detalle
+   TAZOS DORADOS · app.js v3
+   NUEVO en esta versión:
+   - Módulo completo de Juegos (CRUD)
+   - Detalle de juego con scoreboard
+   - Capturar resultado con preview W/L/T
+   - Duplicar juego (para equipos recurrentes)
+   - FAB también funciona en pantalla Calendario
+   - Home ahora navega al detalle del próximo juego al tocarlo
    ============================================================ */
 
 const { createClient } = window.supabase;
@@ -25,7 +27,9 @@ const POSICIONES = [
   { code: 'Utility', name: 'Utility' }
 ];
 
+// ============================================================
 // HELPERS
+// ============================================================
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -59,6 +63,15 @@ function formatDateLong(dateStr, hora) {
   return result;
 }
 
+function formatHour(hora) {
+  if (!hora) return '';
+  const [h, m] = hora.split(':');
+  const hNum = parseInt(h);
+  const ampm = hNum >= 12 ? 'PM' : 'AM';
+  const h12 = hNum > 12 ? hNum - 12 : (hNum === 0 ? 12 : hNum);
+  return `${h12}:${m} ${ampm}`;
+}
+
 function getInitials(nombre) {
   if (!nombre) return '??';
   const parts = nombre.trim().split(/\s+/);
@@ -80,7 +93,17 @@ function calcAge(fechaNac) {
   return age;
 }
 
+// Calcula resultado W/L/T a partir de marcador
+function calcResult(tazos, rival) {
+  const t = Number(tazos), r = Number(rival);
+  if (t > r) return 'W';
+  if (t < r) return 'L';
+  return 'T';
+}
+
+// ============================================================
 // MODAL SYSTEM
+// ============================================================
 const modalBackdrop = document.getElementById('modalBackdrop');
 const modalContent = document.getElementById('modalContent');
 
@@ -99,7 +122,9 @@ modalBackdrop.addEventListener('click', (e) => {
   if (e.target === modalBackdrop) closeModal();
 });
 
+// ============================================================
 // AUTH
+// ============================================================
 async function checkAuthStatus() {
   const { data: { session } } = await db.auth.getSession();
   if (session) {
@@ -238,7 +263,9 @@ document.getElementById('adminBtn').addEventListener('click', () => {
   else showLoginModal();
 });
 
+// ============================================================
 // PANTALLA: INICIO
+// ============================================================
 async function loadHome() {
   const container = document.getElementById('home-content');
   try {
@@ -258,7 +285,7 @@ async function loadHome() {
 
     if (nextGame) {
       html += `
-        <div class="next-game">
+        <div class="next-game" onclick="showGameDetail('${nextGame.id}')">
           <div class="game-date">${formatDateLong(nextGame.fecha, nextGame.hora)}</div>
           <div class="game-matchup">
             <div class="team-side">
@@ -275,7 +302,7 @@ async function loadHome() {
         </div>`;
     } else {
       html += `
-        <div class="next-game">
+        <div class="next-game" style="cursor: default;">
           <div class="game-date" style="color: var(--text-muted);">SIN JUEGOS PROGRAMADOS</div>
           <div style="text-align: center; padding: 20px 0; color: var(--cream-2); font-family: 'Caveat', cursive; font-size: 18px;">
             ¡Agarra la mascota, que vamos a empezar!
@@ -331,7 +358,9 @@ async function loadHome() {
   }
 }
 
+// ============================================================
 // PANTALLA: TESORERÍA
+// ============================================================
 async function loadTesoreria() {
   const container = document.getElementById('tesoreria-content');
   try {
@@ -417,9 +446,9 @@ async function loadTesoreria() {
   }
 }
 
-// =================================================================
-// PANTALLA: ROSTER (ahora muestra activos + desactivados al final)
-// =================================================================
+// ============================================================
+// PANTALLA: ROSTER
+// ============================================================
 function renderPlayerCard(p) {
   const posiciones = Array.isArray(p.posicion) && p.posicion.length > 0 ? p.posicion.join(' / ') : 'UTILITY';
   const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
@@ -439,7 +468,6 @@ function renderPlayerCard(p) {
 async function loadRoster() {
   const container = document.getElementById('roster-content');
   try {
-    // Traer TODOS los jugadores, activos e inactivos
     const { data, error } = await db
       .from('players')
       .select('*')
@@ -458,11 +486,8 @@ async function loadRoster() {
       return;
     }
 
-    // Separar activos e inactivos
     const activos = data.filter(p => p.activo);
     const inactivos = data.filter(p => !p.activo);
-
-    // Si NO es tesorero, solo mostrar activos
     const mostrarInactivos = state.isTesorero && inactivos.length > 0;
 
     let html = `
@@ -470,22 +495,16 @@ async function loadRoster() {
         ${activos.length} TAZOS DORADOS ACTIVOS
       </div>
       <div class="roster-grid">`;
-
-    for (const p of activos) {
-      html += renderPlayerCard(p);
-    }
+    for (const p of activos) html += renderPlayerCard(p);
     html += `</div>`;
 
-    // Sección de inactivos (solo tesorero)
     if (mostrarInactivos) {
       html += `
         <div class="inactive-subgrid-label">
           ─── DESACTIVADOS (${inactivos.length}) ───
         </div>
         <div class="roster-grid">`;
-      for (const p of inactivos) {
-        html += renderPlayerCard(p);
-      }
+      for (const p of inactivos) html += renderPlayerCard(p);
       html += `</div>`;
     }
 
@@ -496,9 +515,9 @@ async function loadRoster() {
   }
 }
 
-// =================================================================
+// ============================================================
 // DETALLE DE JUGADOR
-// =================================================================
+// ============================================================
 async function showPlayerDetail(playerId) {
   openModal(`
     <div class="modal-header">
@@ -526,12 +545,8 @@ function renderPlayerDetail(p) {
   const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
   const avatarText = p.foto_url ? '' : getInitials(p.nombre);
 
-  // Banner si está desactivado
-  const inactiveBanner = !p.activo
-    ? `<div class="inactive-banner">⚠ JUGADOR DESACTIVADO</div>`
-    : '';
+  const inactiveBanner = !p.activo ? `<div class="inactive-banner">⚠ JUGADOR DESACTIVADO</div>` : '';
 
-  // Construir footer según estado y permisos
   let footerButtons = '';
   if (state.isTesorero) {
     if (p.activo) {
@@ -556,43 +571,22 @@ function renderPlayerDetail(p) {
       <div class="player-detail-name">${escapeHtml(p.nombre)}</div>
       ${p.apodo ? `<div class="player-detail-nickname">"${escapeHtml(p.apodo)}"</div>` : ''}
       <div class="player-detail-info">
-        <div class="detail-row">
-          <span class="detail-label">Posición</span>
-          <span class="detail-value gold">${escapeHtml(posiciones)}</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Lanza</span>
-          <span class="detail-value">${manoMap[p.mano] || '—'}</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Batea</span>
-          <span class="detail-value">${manoMap[p.bateo] || '—'}</span>
-        </div>
-        ${edad !== null ? `
-        <div class="detail-row">
-          <span class="detail-label">Edad</span>
-          <span class="detail-value">${edad} años</span>
-        </div>` : ''}
-        ${p.telefono ? `
-        <div class="detail-row">
-          <span class="detail-label">Teléfono</span>
-          <span class="detail-value"><a href="tel:${escapeHtml(p.telefono)}" style="color: var(--gold);">${escapeHtml(p.telefono)}</a></span>
-        </div>` : ''}
+        <div class="detail-row"><span class="detail-label">Posición</span><span class="detail-value gold">${escapeHtml(posiciones)}</span></div>
+        <div class="detail-row"><span class="detail-label">Lanza</span><span class="detail-value">${manoMap[p.mano] || '—'}</span></div>
+        <div class="detail-row"><span class="detail-label">Batea</span><span class="detail-value">${manoMap[p.bateo] || '—'}</span></div>
+        ${edad !== null ? `<div class="detail-row"><span class="detail-label">Edad</span><span class="detail-value">${edad} años</span></div>` : ''}
+        ${p.telefono ? `<div class="detail-row"><span class="detail-label">Teléfono</span><span class="detail-value"><a href="tel:${escapeHtml(p.telefono)}" style="color: var(--gold);">${escapeHtml(p.telefono)}</a></span></div>` : ''}
       </div>
     </div>
     ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
 }
 
-// =================================================================
-// FORMULARIO JUGADOR (fix: ahora abre el modal!)
-// =================================================================
+// ============================================================
+// FORMULARIO JUGADOR
+// ============================================================
 async function showPlayerForm(playerId) {
-  if (!state.isTesorero) {
-    showLoginModal();
-    return;
-  }
+  if (!state.isTesorero) { showLoginModal(); return; }
 
-  // 🔧 FIX: Abrir el modal primero con un loading, luego renderizar el form
   openModal(`
     <div class="modal-header">
       <h2>${playerId ? 'EDITANDO...' : 'NUEVO JUGADOR'}</h2>
@@ -714,7 +708,6 @@ function renderPlayerForm(p) {
   document.getElementById('avatarInput').addEventListener('change', handleAvatarUpload);
 }
 
-// UPLOAD A CLOUDINARY
 async function handleAvatarUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -762,7 +755,6 @@ async function handleAvatarUpload(e) {
   }
 }
 
-// GUARDAR JUGADOR
 async function savePlayer() {
   const errorDiv = document.getElementById('formError');
   const saveBtn = document.getElementById('saveBtn');
@@ -776,7 +768,6 @@ async function savePlayer() {
   const fotoUrl = document.getElementById('playerPhotoUrl').value || null;
 
   const posicion = Array.from(document.querySelectorAll('input[name="posicion"]:checked')).map(cb => cb.value);
-
   const manoEl = document.querySelector('input[name="mano"]:checked');
   const bateoEl = document.querySelector('input[name="bateo"]:checked');
   const mano = manoEl ? manoEl.value : null;
@@ -798,16 +789,12 @@ async function savePlayer() {
     fecha_nacimiento: fechaNacimiento,
     foto_url: fotoUrl
   };
-  // Solo en nuevos, forzamos activo: true
   if (!id) payload.activo = true;
 
   try {
     let result;
-    if (id) {
-      result = await db.from('players').update(payload).eq('id', id);
-    } else {
-      result = await db.from('players').insert(payload);
-    }
+    if (id) result = await db.from('players').update(payload).eq('id', id);
+    else result = await db.from('players').insert(payload);
     if (result.error) throw result.error;
     closeModal();
     await loadRoster();
@@ -830,8 +817,6 @@ function confirmDeactivate(playerId) {
         <p style="color: var(--cream-2); line-height: 1.6;">
           Aparecerá al final del roster con la etiqueta <strong style="color: var(--red);">INACTIVO</strong>.
           <br>Sus registros se mantienen.
-          <br><br>
-          <strong style="color: var(--gold);">Puedes reactivarlo cuando quieras.</strong>
         </p>
       </div>
     </div>
@@ -847,24 +832,21 @@ async function deactivatePlayer(playerId) {
     if (error) throw error;
     closeModal();
     await loadRoster();
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
+  } catch (err) { alert('Error: ' + err.message); }
 }
 
-// 🔧 NUEVA: Reactivar jugador
 async function reactivatePlayer(playerId) {
   try {
     const { error } = await db.from('players').update({ activo: true }).eq('id', playerId);
     if (error) throw error;
     closeModal();
     await loadRoster();
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
+  } catch (err) { alert('Error: ' + err.message); }
 }
 
-// PANTALLA: CALENDARIO
+// ============================================================
+// PANTALLA: CALENDARIO (lista de juegos clickeable)
+// ============================================================
 async function loadCalendario() {
   const container = document.getElementById('calendario-content');
   try {
@@ -873,21 +855,33 @@ async function loadCalendario() {
 
     const upcoming = (data || []).filter(g => g.status === 'programado').reverse();
     const past = (data || []).filter(g => g.status === 'jugado');
+    const cancelled = (data || []).filter(g => g.status === 'cancelado');
 
-    let html = `<div class="section-title">Próximos juegos</div>`;
+    let html = '';
 
+    if (!data || data.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="emoji">📅</div>
+          <p>Todavía no hay juegos programados.</p>
+          ${state.isTesorero ? `<div class="chk">Toca el botón dorado "+" para agregar el primero</div>` : ''}
+        </div>`;
+      return;
+    }
+
+    html += `<div class="section-title">Próximos juegos</div>`;
     if (upcoming.length > 0) {
       for (const g of upcoming) {
         const d = formatDateShort(g.fecha);
         html += `
-          <div class="cal-game upcoming">
+          <div class="cal-game upcoming" onclick="showGameDetail('${g.id}')">
             <div class="cal-date">
               <div class="day">${d.day}</div>
               <div class="month">${d.month}</div>
             </div>
             <div class="cal-body">
-              <div class="cal-opponent">vs ${escapeHtml(g.rival || 'Por definir')}</div>
-              <div class="cal-venue">${escapeHtml(g.campo || '')}${g.hora ? ' · ' + g.hora.substring(0, 5) : ''}</div>
+              <div class="cal-opponent">${g.es_local ? 'vs' : '@'} ${escapeHtml(g.rival || 'Por definir')}</div>
+              <div class="cal-venue">${escapeHtml(g.campo || 'Campo por confirmar')}${g.hora ? ' · ' + formatHour(g.hora) : ''}</div>
             </div>
           </div>`;
       }
@@ -904,18 +898,37 @@ async function loadCalendario() {
           ? `<div class="cal-result w">G ${g.carreras_tazos || 0}-${g.carreras_rival || 0}</div>`
           : g.resultado === 'L'
           ? `<div class="cal-result l">P ${g.carreras_tazos || 0}-${g.carreras_rival || 0}</div>`
-          : `<div class="cal-result">E ${g.carreras_tazos || 0}-${g.carreras_rival || 0}</div>`;
+          : `<div class="cal-result t">E ${g.carreras_tazos || 0}-${g.carreras_rival || 0}</div>`;
         html += `
-          <div class="cal-game ${resultClass}">
+          <div class="cal-game ${resultClass}" onclick="showGameDetail('${g.id}')">
             <div class="cal-date">
               <div class="day">${d.day}</div>
               <div class="month">${d.month}</div>
             </div>
             <div class="cal-body">
-              <div class="cal-opponent">vs ${escapeHtml(g.rival || 'Rival')}</div>
+              <div class="cal-opponent">${g.es_local ? 'vs' : '@'} ${escapeHtml(g.rival || 'Rival')}</div>
               <div class="cal-venue">${escapeHtml(g.campo || '')}</div>
             </div>
             ${resultPill}
+          </div>`;
+      }
+    }
+
+    if (cancelled.length > 0) {
+      html += `<div class="section-title muted" style="margin-top: 22px;">Cancelados</div>`;
+      for (const g of cancelled) {
+        const d = formatDateShort(g.fecha);
+        html += `
+          <div class="cal-game cancelled" onclick="showGameDetail('${g.id}')">
+            <div class="cal-date">
+              <div class="day">${d.day}</div>
+              <div class="month">${d.month}</div>
+            </div>
+            <div class="cal-body">
+              <div class="cal-opponent">${g.es_local ? 'vs' : '@'} ${escapeHtml(g.rival || 'Rival')}</div>
+              <div class="cal-venue">${escapeHtml(g.campo || '')}</div>
+            </div>
+            <div class="cal-result cancel">CANCELADO</div>
           </div>`;
       }
     }
@@ -927,9 +940,532 @@ async function loadCalendario() {
   }
 }
 
-// =================================================================
-// NAVEGACIÓN (fix: ahora agrega clase screen-{name} al body para el FAB)
-// =================================================================
+// ============================================================
+// DETALLE DE JUEGO
+// ============================================================
+async function showGameDetail(gameId) {
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const { data: g, error } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
+    if (error) throw error;
+    if (!g) throw new Error('Juego no encontrado');
+    renderGameDetail(g);
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar el juego.', err.message)}</div>`;
+  }
+}
+
+function renderGameDetail(g) {
+  // Fecha grande
+  const dateHeader = `
+    <div class="game-detail-header">
+      <div class="game-detail-date">${formatDateLong(g.fecha)}</div>
+      ${g.hora ? `<div class="game-detail-time">${formatHour(g.hora)}</div>` : ''}
+    </div>`;
+
+  // Status banner
+  let statusBanner = '';
+  if (g.status === 'programado') {
+    statusBanner = `<div class="status-banner programado">🟡 JUEGO PROGRAMADO</div>`;
+  } else if (g.status === 'cancelado') {
+    statusBanner = `<div class="status-banner cancelado">⛔ JUEGO CANCELADO</div>`;
+  }
+
+  // Scoreboard o matchup
+  let scoreSection = '';
+  if (g.status === 'jugado') {
+    const tazosScore = g.carreras_tazos ?? 0;
+    const rivalScore = g.carreras_rival ?? 0;
+    const tazosClass = g.resultado === 'W' ? 'win' : g.resultado === 'L' ? 'loss' : '';
+    const rivalClass = g.resultado === 'L' ? 'win' : g.resultado === 'W' ? 'loss' : '';
+
+    let resultText = '', resultClass = '';
+    if (g.resultado === 'W') { resultText = '🏆 GANAMOS'; resultClass = 'win'; }
+    else if (g.resultado === 'L') { resultText = '💔 PERDIMOS'; resultClass = 'loss'; }
+    else { resultText = '🤝 EMPATE'; resultClass = 'tie'; }
+
+    scoreSection = `
+      <div class="scoreboard">
+        <div class="scoreboard-row">
+          <div class="scoreboard-team us">
+            TAZOS DORADOS
+            <small>${g.es_local ? 'LOCAL' : 'VISITA'}</small>
+          </div>
+          <div class="scoreboard-score ${tazosClass}">${tazosScore}</div>
+        </div>
+        <div class="scoreboard-row">
+          <div class="scoreboard-team rival">
+            ${escapeHtml(g.rival || 'RIVAL')}
+            <small>${g.es_local ? 'VISITA' : 'LOCAL'}</small>
+          </div>
+          <div class="scoreboard-score ${rivalClass}">${rivalScore}</div>
+        </div>
+      </div>
+      <div class="result-badge ${resultClass}">${resultText}</div>`;
+  } else {
+    scoreSection = `
+      <div class="game-matchup" style="margin-bottom: 18px;">
+        <div class="team-side">
+          <div class="team-name us">TAZOS</div>
+          <div class="team-label">${g.es_local ? 'LOCAL' : 'VISITA'}</div>
+        </div>
+        <div class="vs-box">VS</div>
+        <div class="team-side">
+          <div class="team-name">${escapeHtml(g.rival || 'POR DEFINIR')}</div>
+          <div class="team-label">${g.es_local ? 'VISITA' : 'LOCAL'}</div>
+        </div>
+      </div>`;
+  }
+
+  // Botón principal (captura resultado) — solo si programado y tesorero
+  let captureButton = '';
+  if (g.status === 'programado' && state.isTesorero) {
+    captureButton = `
+      <button class="btn-hero" onclick="showCaptureResult('${g.id}')">
+        <span class="icon">⚾</span>
+        <span>CAPTURAR RESULTADO</span>
+      </button>`;
+  }
+
+  // Info del campo y notas
+  const infoRows = `
+    <div class="player-detail-info">
+      ${g.campo ? `<div class="detail-row"><span class="detail-label">Campo</span><span class="detail-value">${escapeHtml(g.campo)}</span></div>` : ''}
+      <div class="detail-row"><span class="detail-label">Condición</span><span class="detail-value gold">${g.es_local ? '🏠 Somos locales' : '✈️ Vamos de visita'}</span></div>
+      ${g.hora ? `<div class="detail-row"><span class="detail-label">Hora</span><span class="detail-value">${formatHour(g.hora)}</span></div>` : ''}
+    </div>
+    ${g.notas ? `<div class="notes-box">📝 ${escapeHtml(g.notas)}</div>` : ''}`;
+
+  // Footer — editar/duplicar/eliminar para tesorero
+  let footerButtons = '';
+  if (state.isTesorero) {
+    footerButtons = `
+      <button class="btn btn-secondary" onclick="showGameForm('${g.id}')">✏️ Editar</button>
+      <button class="btn btn-secondary" onclick="duplicateGame('${g.id}')">📋 Duplicar</button>
+      <button class="btn btn-danger" onclick="confirmDeleteGame('${g.id}')">🗑️</button>`;
+  }
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>JUEGO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      ${dateHeader}
+      ${statusBanner}
+      ${scoreSection}
+      ${captureButton}
+      ${infoRows}
+    </div>
+    ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
+}
+
+// ============================================================
+// FORMULARIO DE JUEGO (crear/editar)
+// ============================================================
+async function showGameForm(gameId, prefillData) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${gameId ? 'EDITANDO...' : (prefillData ? 'DUPLICANDO...' : 'NUEVO JUEGO')}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+
+  let game = null;
+  if (gameId) {
+    const { data, error } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
+    if (error) {
+      modalContent.innerHTML = `
+        <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${errorBox('No se pudo cargar el juego.', error.message)}</div>`;
+      return;
+    }
+    game = data;
+  } else if (prefillData) {
+    game = prefillData;
+  }
+  renderGameForm(game, !!gameId);
+}
+
+function renderGameForm(g, isEdit) {
+  const statusChips = [
+    { v: 'programado', label: '🟡 Programado' },
+    { v: 'jugado', label: '✅ Jugado' },
+    { v: 'cancelado', label: '⛔ Cancelado' }
+  ].map(s => `
+    <label class="status-chip">
+      <input type="radio" name="status" value="${s.v}" ${(g?.status || 'programado') === s.v ? 'checked' : ''}>
+      <span class="status-chip-label">${s.label}</span>
+    </label>`).join('');
+
+  const localChips = [
+    { v: 'true', label: '🏠 LOCAL' },
+    { v: 'false', label: '✈️ VISITA' }
+  ].map(s => `
+    <label class="radio-chip">
+      <input type="radio" name="es_local" value="${s.v}" ${String(g?.es_local ?? true) === s.v ? 'checked' : ''}>
+      <span class="radio-chip-label">${s.label}</span>
+    </label>`).join('');
+
+  // Si es jugado mostramos campos de marcador
+  const scoreFields = `
+    <div id="scoreFieldsWrapper" style="display: ${g?.status === 'jugado' ? 'block' : 'none'};">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Carreras Tazos</label>
+          <input type="number" class="form-input" id="carrerasTazos" value="${g?.carreras_tazos ?? ''}" min="0" max="99">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Carreras Rival</label>
+          <input type="number" class="form-input" id="carrerasRival" value="${g?.carreras_rival ?? ''}" min="0" max="99">
+        </div>
+      </div>
+    </div>`;
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>${isEdit ? 'EDITAR JUEGO' : 'NUEVO JUEGO'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="gameForm">
+        <input type="hidden" id="gameId" value="${isEdit ? g.id : ''}">
+        <div id="gameFormError"></div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" id="gameFecha" value="${g?.fecha || ''}" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Hora</label>
+            <input type="time" class="form-input" id="gameHora" value="${g?.hora ? g.hora.substring(0,5) : ''}">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Rival</label>
+          <input type="text" class="form-input" id="gameRival" value="${escapeHtml(g?.rival || '')}" required placeholder="Ej. Los Águilas">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Campo / Estadio</label>
+          <input type="text" class="form-input" id="gameCampo" value="${escapeHtml(g?.campo || '')}" placeholder="Ej. Parque Agua Azul">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">¿Dónde jugamos?</label>
+          <div class="radio-row">${localChips}</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Estado</label>
+          <div class="status-toggle">${statusChips}</div>
+        </div>
+
+        ${scoreFields}
+
+        <div class="form-group">
+          <label class="form-label">Notas (opcional)</label>
+          <textarea class="form-textarea" id="gameNotas" placeholder="Pitcher abridor, jugadas épicas, ausencias, clima...">${escapeHtml(g?.notas || '')}</textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="saveGameBtn">Guardar</button>
+    </div>`;
+
+  document.getElementById('saveGameBtn').addEventListener('click', saveGame);
+
+  // Mostrar/ocultar campos de marcador según status
+  document.querySelectorAll('input[name="status"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const wrapper = document.getElementById('scoreFieldsWrapper');
+      wrapper.style.display = e.target.value === 'jugado' ? 'block' : 'none';
+    });
+  });
+}
+
+async function saveGame() {
+  const errorDiv = document.getElementById('gameFormError');
+  const saveBtn = document.getElementById('saveGameBtn');
+
+  const id = document.getElementById('gameId').value;
+  const fecha = document.getElementById('gameFecha').value;
+  const hora = document.getElementById('gameHora').value || null;
+  const rival = document.getElementById('gameRival').value.trim();
+  const campo = document.getElementById('gameCampo').value.trim() || null;
+  const esLocalEl = document.querySelector('input[name="es_local"]:checked');
+  const statusEl = document.querySelector('input[name="status"]:checked');
+  const es_local = esLocalEl ? esLocalEl.value === 'true' : true;
+  const status = statusEl ? statusEl.value : 'programado';
+  const notas = document.getElementById('gameNotas').value.trim() || null;
+
+  if (!fecha || !rival) {
+    errorDiv.innerHTML = '<div class="form-error">Completa fecha y rival</div>';
+    return;
+  }
+
+  const payload = {
+    fecha, hora, rival, campo, es_local, status, notas
+  };
+
+  // Si status es jugado, incluir marcador y calcular resultado
+  if (status === 'jugado') {
+    const cTazos = parseInt(document.getElementById('carrerasTazos').value);
+    const cRival = parseInt(document.getElementById('carrerasRival').value);
+    if (isNaN(cTazos) || isNaN(cRival)) {
+      errorDiv.innerHTML = '<div class="form-error">Si el juego ya se jugó, captura las carreras de ambos equipos</div>';
+      return;
+    }
+    payload.carreras_tazos = cTazos;
+    payload.carreras_rival = cRival;
+    payload.resultado = calcResult(cTazos, cRival);
+  } else if (status === 'programado') {
+    payload.carreras_tazos = null;
+    payload.carreras_rival = null;
+    payload.resultado = null;
+  } else if (status === 'cancelado') {
+    payload.carreras_tazos = null;
+    payload.carreras_rival = null;
+    payload.resultado = null;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+  errorDiv.innerHTML = '';
+
+  try {
+    let result;
+    if (id) result = await db.from('games').update(payload).eq('id', id);
+    else result = await db.from('games').insert(payload);
+    if (result.error) throw result.error;
+    closeModal();
+    // Forzar recarga de home y calendario
+    loaded.home = false;
+    loaded.calendario = false;
+    if (state.currentScreen === 'calendario') await loadCalendario();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Guardar';
+  }
+}
+
+// ============================================================
+// CAPTURAR RESULTADO (flujo dedicado con preview)
+// ============================================================
+async function showCaptureResult(gameId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const { data: g, error } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
+    if (error) throw error;
+    if (!g) throw new Error('Juego no encontrado');
+    renderCaptureResult(g);
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderCaptureResult(g) {
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>CAPTURAR RESULTADO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="game-detail-header">
+        <div class="game-detail-date">${formatDateLong(g.fecha)}</div>
+        <div style="color: var(--cream-2); margin-top: 6px; font-size: 14px;">vs ${escapeHtml(g.rival)}</div>
+      </div>
+
+      <div id="captureError"></div>
+
+      <div class="score-capture">
+        <div class="score-side">
+          <div class="score-side-label us">TAZOS</div>
+          <input type="number" class="score-input" id="capTazos" min="0" max="99" inputmode="numeric" value="">
+        </div>
+        <div class="score-vs-big">VS</div>
+        <div class="score-side">
+          <div class="score-side-label rival">${escapeHtml(g.rival.length > 8 ? g.rival.substring(0, 8) + '…' : g.rival).toUpperCase()}</div>
+          <input type="number" class="score-input" id="capRival" min="0" max="99" inputmode="numeric" value="">
+        </div>
+      </div>
+
+      <div class="result-preview" id="resultPreview">
+        INGRESA EL MARCADOR
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notas del juego (opcional)</label>
+        <textarea class="form-textarea" id="capNotas" placeholder="¿Quién pitcheó? ¿Jugada épica? Anota lo memorable...">${escapeHtml(g.notas || '')}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="saveResultBtn" disabled>Guardar resultado</button>
+    </div>`;
+
+  const capTazos = document.getElementById('capTazos');
+  const capRival = document.getElementById('capRival');
+  const preview = document.getElementById('resultPreview');
+  const saveBtn = document.getElementById('saveResultBtn');
+
+  function updatePreview() {
+    const t = parseInt(capTazos.value);
+    const r = parseInt(capRival.value);
+    preview.className = 'result-preview';
+    if (isNaN(t) || isNaN(r)) {
+      preview.textContent = 'INGRESA EL MARCADOR';
+      saveBtn.disabled = true;
+      return;
+    }
+    saveBtn.disabled = false;
+    if (t > r) {
+      preview.classList.add('win');
+      preview.textContent = `🏆 GANAMOS ${t}-${r}`;
+    } else if (t < r) {
+      preview.classList.add('loss');
+      preview.textContent = `💔 PERDIMOS ${t}-${r}`;
+    } else {
+      preview.classList.add('tie');
+      preview.textContent = `🤝 EMPATE ${t}-${r}`;
+    }
+  }
+
+  capTazos.addEventListener('input', updatePreview);
+  capRival.addEventListener('input', updatePreview);
+
+  saveBtn.addEventListener('click', async () => {
+    const t = parseInt(capTazos.value);
+    const r = parseInt(capRival.value);
+    const notas = document.getElementById('capNotas').value.trim() || null;
+
+    if (isNaN(t) || isNaN(r)) return;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Guardando...';
+
+    try {
+      const { error } = await db.from('games').update({
+        carreras_tazos: t,
+        carreras_rival: r,
+        resultado: calcResult(t, r),
+        status: 'jugado',
+        notas
+      }).eq('id', g.id);
+
+      if (error) throw error;
+      closeModal();
+      loaded.home = false;
+      loaded.calendario = false;
+      if (state.currentScreen === 'calendario') await loadCalendario();
+      else if (state.currentScreen === 'home') await loadHome();
+      // Mostrar el detalle del juego recién capturado
+      setTimeout(() => showGameDetail(g.id), 150);
+    } catch (err) {
+      document.getElementById('captureError').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar resultado';
+    }
+  });
+
+  // Focus en input de Tazos al abrir
+  setTimeout(() => capTazos.focus(), 200);
+}
+
+// ============================================================
+// DUPLICAR JUEGO
+// ============================================================
+async function duplicateGame(gameId) {
+  try {
+    const { data: g } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
+    if (!g) throw new Error('Juego no encontrado');
+
+    // Prefill: mismo rival, campo, es_local, hora. Fecha vacía para que se re-ingrese. Status programado.
+    const prefill = {
+      rival: g.rival,
+      campo: g.campo,
+      es_local: g.es_local,
+      hora: g.hora,
+      status: 'programado',
+      fecha: '',
+      notas: ''
+    };
+    showGameForm(null, prefill);
+  } catch (err) {
+    alert('Error al duplicar: ' + err.message);
+  }
+}
+
+// ============================================================
+// ELIMINAR JUEGO
+// ============================================================
+function confirmDeleteGame(gameId) {
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>ELIMINAR JUEGO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
+        <p style="color: var(--cream-2); line-height: 1.6;">
+          Esta acción <strong style="color: var(--red);">NO se puede deshacer</strong>.
+          <br><br>
+          Se eliminarán el juego y todos sus datos relacionados (fotos, asistencia, gastos asociados).
+          <br><br>
+          <strong style="color: var(--gold);">¿Estás seguro?</strong>
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="showGameDetail('${gameId}')">Cancelar</button>
+      <button class="btn btn-danger" onclick="deleteGame('${gameId}')">Sí, eliminar</button>
+    </div>`;
+}
+
+async function deleteGame(gameId) {
+  try {
+    const { error } = await db.from('games').delete().eq('id', gameId);
+    if (error) throw error;
+    closeModal();
+    loaded.home = false;
+    loaded.calendario = false;
+    if (state.currentScreen === 'calendario') await loadCalendario();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// ============================================================
+// NAVEGACIÓN
+// ============================================================
 const screens = document.querySelectorAll('.screen');
 const navItems = document.querySelectorAll('.nav-item');
 
@@ -949,7 +1485,6 @@ function showScreen(target) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   state.currentScreen = target;
 
-  // 🔧 FIX: Actualizar clase del body para controlar visibilidad del FAB
   document.body.classList.remove('screen-home', 'screen-tesoreria', 'screen-roster', 'screen-calendario', 'screen-galeria');
   document.body.classList.add(`screen-${target}`);
 
@@ -971,13 +1506,21 @@ navItems.forEach(btn => {
   btn.addEventListener('click', () => showScreen(btn.dataset.screen));
 });
 
-document.getElementById('fabAddPlayer').addEventListener('click', () => {
-  showPlayerForm();
+// FAB: diferentes acciones según la pantalla
+document.getElementById('fabAdd').addEventListener('click', () => {
+  if (state.currentScreen === 'roster') showPlayerForm();
+  else if (state.currentScreen === 'calendario') showGameForm();
 });
 
 // Exponer funciones globales (para onclick)
 window.showPlayerDetail = showPlayerDetail;
 window.showPlayerForm = showPlayerForm;
+window.showGameDetail = showGameDetail;
+window.showGameForm = showGameForm;
+window.showCaptureResult = showCaptureResult;
+window.duplicateGame = duplicateGame;
+window.confirmDeleteGame = confirmDeleteGame;
+window.deleteGame = deleteGame;
 window.closeModal = closeModal;
 window.handleLogout = handleLogout;
 window.confirmDeactivate = confirmDeactivate;
@@ -987,7 +1530,7 @@ window.reactivatePlayer = reactivatePlayer;
 // INICIO
 (async () => {
   await checkAuthStatus();
-  document.body.classList.add('screen-home'); // Inicia en home
+  document.body.classList.add('screen-home');
   loadHome();
   loaded.home = true;
 })();

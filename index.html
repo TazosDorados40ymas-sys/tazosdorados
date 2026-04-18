@@ -9,6 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="Tazos">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
+<!-- Prevenir cache agresivo en móviles (para que los cambios se vean rápido) -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="app-version" content="7">
+
 <title>Tazos Dorados · Liga Veteranos 40+</title>
 <meta name="description" content="App oficial del equipo de béisbol Tazos Dorados 40+">
 
@@ -510,6 +516,8 @@
   .lightbox-nav.next { right: 12px; }
   .lightbox-footer { padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); text-align: center; color: var(--text-muted); font-size: 11px; }
   body.lightbox-open { overflow: hidden; }
+  /* Badge de versión (discreto, esquina inferior derecha) */
+  .app-version { position: fixed; bottom: 82px; right: 6px; font-size: 9px; color: var(--text-muted); opacity: 0.35; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; pointer-events: none; z-index: 5; }
 </style>
 </head>
 <body>
@@ -588,8 +596,10 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=7"></script>
+<script src="app.js?v=7"></script>
+
+<div class="app-version">v7</div>
 
 </body>
 </html>

@@ -1,12 +1,12 @@
 /* ============================================================
-   TAZOS DORADOS · app.js v3
-   NUEVO en esta versión:
-   - Módulo completo de Juegos (CRUD)
-   - Detalle de juego con scoreboard
-   - Capturar resultado con preview W/L/T
-   - Duplicar juego (para equipos recurrentes)
-   - FAB también funciona en pantalla Calendario
-   - Home ahora navega al detalle del próximo juego al tocarlo
+   TAZOS DORADOS · app.js v4
+   Módulos:
+   - Auth (login/logout tesorero)
+   - Home (próximo juego, récord, saldo, últimos movimientos)
+   - Tesorería (saldo, gastos por categoría, estado por jugador)
+   - Roster (tarjetas, detalle, form nuevo/editar, foto Cloudinary)
+   - Juegos (CRUD, scoreboard, captura resultado, duplicar)
+   - Asistencia (3 estados, pagó/debe, bulk actions, stats en vivo)
    ============================================================ */
 
 const { createClient } = window.supabase;
@@ -26,6 +26,17 @@ const POSICIONES = [
   { code: 'RF', name: 'Jardín Der.' }, { code: 'DH', name: 'Bat. Des.' },
   { code: 'Utility', name: 'Utility' }
 ];
+
+// Aportaciones según reglas del equipo
+const APORTACION_JUGO = 100;
+const APORTACION_AVISO = 50;
+const APORTACION_PENDIENTE = 0;
+
+function getAportacion(estado) {
+  if (estado === 'jugo') return APORTACION_JUGO;
+  if (estado === 'no_asistio') return APORTACION_AVISO;
+  return APORTACION_PENDIENTE;
+}
 
 // ============================================================
 // HELPERS
@@ -93,7 +104,6 @@ function calcAge(fechaNac) {
   return age;
 }
 
-// Calcula resultado W/L/T a partir de marcador
 function calcResult(tazos, rival) {
   const t = Number(tazos), r = Number(rival);
   if (t > r) return 'W';
@@ -845,7 +855,7 @@ async function reactivatePlayer(playerId) {
 }
 
 // ============================================================
-// PANTALLA: CALENDARIO (lista de juegos clickeable)
+// PANTALLA: CALENDARIO
 // ============================================================
 async function loadCalendario() {
   const container = document.getElementById('calendario-content');
@@ -952,10 +962,13 @@ async function showGameDetail(gameId) {
     <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
 
   try {
-    const { data: g, error } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
-    if (error) throw error;
-    if (!g) throw new Error('Juego no encontrado');
-    renderGameDetail(g);
+    const [gameRes, attRes] = await Promise.all([
+      db.from('games').select('*').eq('id', gameId).maybeSingle(),
+      db.from('attendance').select('estado, aportacion, pagado').eq('game_id', gameId)
+    ]);
+    if (gameRes.error) throw gameRes.error;
+    if (!gameRes.data) throw new Error('Juego no encontrado');
+    renderGameDetail(gameRes.data, attRes.data || []);
   } catch (err) {
     modalContent.innerHTML = `
       <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
@@ -963,7 +976,7 @@ async function showGameDetail(gameId) {
   }
 }
 
-function renderGameDetail(g) {
+function renderGameDetail(g, attendanceRecords) {
   // Fecha grande
   const dateHeader = `
     <div class="game-detail-header">
@@ -1025,7 +1038,7 @@ function renderGameDetail(g) {
       </div>`;
   }
 
-  // Botón principal (captura resultado) — solo si programado y tesorero
+  // Botón capturar resultado — solo si programado + tesorero
   let captureButton = '';
   if (g.status === 'programado' && state.isTesorero) {
     captureButton = `
@@ -1033,6 +1046,60 @@ function renderGameDetail(g) {
         <span class="icon">⚾</span>
         <span>CAPTURAR RESULTADO</span>
       </button>`;
+  }
+
+  // Mini resumen de asistencia + botón
+  const attExists = attendanceRecords.length > 0;
+  let attendanceMini = '';
+  let attendanceButton = '';
+
+  if (g.status === 'jugado') {
+    if (attExists) {
+      const jugaron = attendanceRecords.filter(a => a.estado === 'jugo').length;
+      const avisaron = attendanceRecords.filter(a => a.estado === 'no_asistio').length;
+      const pendientes = attendanceRecords.filter(a => a.estado === 'pendiente').length;
+      const totalAport = attendanceRecords.reduce((s, a) => s + Number(a.aportacion || 0), 0);
+      const cobrado = attendanceRecords.filter(a => a.pagado).reduce((s, a) => s + Number(a.aportacion || 0), 0);
+      const porCobrar = totalAport - cobrado;
+
+      attendanceMini = `
+        <div class="attendance-mini-summary">
+          <div class="attendance-mini-title">📋 ASISTENCIA & APORTACIONES</div>
+          <div class="attendance-mini-row">
+            <span>
+              ${jugaron > 0 ? `<span class="mini-pill jugo">⚾ ${jugaron} JUGÓ</span>` : ''}
+              ${avisaron > 0 ? `<span class="mini-pill aviso">📲 ${avisaron} AVISÓ</span>` : ''}
+              ${pendientes > 0 ? `<span class="mini-pill pend">❓ ${pendientes} PEND</span>` : ''}
+            </span>
+          </div>
+          <div class="attendance-mini-row" style="margin-top: 8px;">
+            <span>Total a aportar</span>
+            <strong>${formatMoney(totalAport)}</strong>
+          </div>
+          <div class="attendance-mini-row">
+            <span style="color: var(--green);">Cobrado</span>
+            <strong style="color: var(--green);">${formatMoney(cobrado)}</strong>
+          </div>
+          ${porCobrar > 0 ? `
+          <div class="attendance-mini-row">
+            <span style="color: var(--red);">Por cobrar</span>
+            <strong style="color: var(--red);">${formatMoney(porCobrar)}</strong>
+          </div>` : ''}
+        </div>`;
+
+      if (state.isTesorero) {
+        attendanceButton = `
+          <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="showAttendance('${g.id}')">
+            ✏️ EDITAR ASISTENCIA
+          </button>`;
+      }
+    } else if (state.isTesorero) {
+      attendanceButton = `
+        <button class="btn-hero" onclick="showAttendance('${g.id}')">
+          <span class="icon">📋</span>
+          <span>CAPTURAR ASISTENCIA</span>
+        </button>`;
+    }
   }
 
   // Info del campo y notas
@@ -1044,7 +1111,7 @@ function renderGameDetail(g) {
     </div>
     ${g.notas ? `<div class="notes-box">📝 ${escapeHtml(g.notas)}</div>` : ''}`;
 
-  // Footer — editar/duplicar/eliminar para tesorero
+  // Footer
   let footerButtons = '';
   if (state.isTesorero) {
     footerButtons = `
@@ -1063,13 +1130,15 @@ function renderGameDetail(g) {
       ${statusBanner}
       ${scoreSection}
       ${captureButton}
+      ${attendanceMini}
+      ${attendanceButton}
       ${infoRows}
     </div>
     ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
 }
 
 // ============================================================
-// FORMULARIO DE JUEGO (crear/editar)
+// FORMULARIO DE JUEGO
 // ============================================================
 async function showGameForm(gameId, prefillData) {
   if (!state.isTesorero) { showLoginModal(); return; }
@@ -1118,7 +1187,6 @@ function renderGameForm(g, isEdit) {
       <span class="radio-chip-label">${s.label}</span>
     </label>`).join('');
 
-  // Si es jugado mostramos campos de marcador
   const scoreFields = `
     <div id="scoreFieldsWrapper" style="display: ${g?.status === 'jugado' ? 'block' : 'none'};">
       <div class="form-row">
@@ -1189,7 +1257,6 @@ function renderGameForm(g, isEdit) {
 
   document.getElementById('saveGameBtn').addEventListener('click', saveGame);
 
-  // Mostrar/ocultar campos de marcador según status
   document.querySelectorAll('input[name="status"]').forEach(radio => {
     radio.addEventListener('change', (e) => {
       const wrapper = document.getElementById('scoreFieldsWrapper');
@@ -1218,26 +1285,19 @@ async function saveGame() {
     return;
   }
 
-  const payload = {
-    fecha, hora, rival, campo, es_local, status, notas
-  };
+  const payload = { fecha, hora, rival, campo, es_local, status, notas };
 
-  // Si status es jugado, incluir marcador y calcular resultado
   if (status === 'jugado') {
     const cTazos = parseInt(document.getElementById('carrerasTazos').value);
     const cRival = parseInt(document.getElementById('carrerasRival').value);
     if (isNaN(cTazos) || isNaN(cRival)) {
-      errorDiv.innerHTML = '<div class="form-error">Si el juego ya se jugó, captura las carreras de ambos equipos</div>';
+      errorDiv.innerHTML = '<div class="form-error">Si el juego ya se jugó, captura las carreras</div>';
       return;
     }
     payload.carreras_tazos = cTazos;
     payload.carreras_rival = cRival;
     payload.resultado = calcResult(cTazos, cRival);
-  } else if (status === 'programado') {
-    payload.carreras_tazos = null;
-    payload.carreras_rival = null;
-    payload.resultado = null;
-  } else if (status === 'cancelado') {
+  } else {
     payload.carreras_tazos = null;
     payload.carreras_rival = null;
     payload.resultado = null;
@@ -1253,7 +1313,6 @@ async function saveGame() {
     else result = await db.from('games').insert(payload);
     if (result.error) throw result.error;
     closeModal();
-    // Forzar recarga de home y calendario
     loaded.home = false;
     loaded.calendario = false;
     if (state.currentScreen === 'calendario') await loadCalendario();
@@ -1266,7 +1325,7 @@ async function saveGame() {
 }
 
 // ============================================================
-// CAPTURAR RESULTADO (flujo dedicado con preview)
+// CAPTURAR RESULTADO
 // ============================================================
 async function showCaptureResult(gameId) {
   if (!state.isTesorero) { showLoginModal(); return; }
@@ -1385,8 +1444,8 @@ function renderCaptureResult(g) {
       loaded.calendario = false;
       if (state.currentScreen === 'calendario') await loadCalendario();
       else if (state.currentScreen === 'home') await loadHome();
-      // Mostrar el detalle del juego recién capturado
-      setTimeout(() => showGameDetail(g.id), 150);
+      // Pasar DIRECTO a asistencia (flow guiado)
+      setTimeout(() => showAttendance(g.id), 200);
     } catch (err) {
       document.getElementById('captureError').innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
       saveBtn.disabled = false;
@@ -1394,7 +1453,6 @@ function renderCaptureResult(g) {
     }
   });
 
-  // Focus en input de Tazos al abrir
   setTimeout(() => capTazos.focus(), 200);
 }
 
@@ -1406,7 +1464,6 @@ async function duplicateGame(gameId) {
     const { data: g } = await db.from('games').select('*').eq('id', gameId).maybeSingle();
     if (!g) throw new Error('Juego no encontrado');
 
-    // Prefill: mismo rival, campo, es_local, hora. Fecha vacía para que se re-ingrese. Status programado.
     const prefill = {
       rival: g.rival,
       campo: g.campo,
@@ -1437,7 +1494,7 @@ function confirmDeleteGame(gameId) {
         <p style="color: var(--cream-2); line-height: 1.6;">
           Esta acción <strong style="color: var(--red);">NO se puede deshacer</strong>.
           <br><br>
-          Se eliminarán el juego y todos sus datos relacionados (fotos, asistencia, gastos asociados).
+          Se eliminarán el juego y todos sus datos (asistencia, fotos, gastos asociados).
           <br><br>
           <strong style="color: var(--gold);">¿Estás seguro?</strong>
         </p>
@@ -1461,6 +1518,301 @@ async function deleteGame(gameId) {
   } catch (err) {
     alert('Error: ' + err.message);
   }
+}
+
+// ============================================================
+// ASISTENCIA
+// ============================================================
+let attendanceState = {};
+let attendancePlayersCache = [];
+let attendanceGameCache = null;
+let attendanceDirty = false;
+
+async function showAttendance(gameId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const [gameRes, playersRes, attRes] = await Promise.all([
+      db.from('games').select('*').eq('id', gameId).maybeSingle(),
+      db.from('players').select('*').eq('activo', true).order('numero'),
+      db.from('attendance').select('*').eq('game_id', gameId)
+    ]);
+
+    if (gameRes.error) throw gameRes.error;
+    if (!gameRes.data) throw new Error('Juego no encontrado');
+
+    const game = gameRes.data;
+    const activePlayers = playersRes.data || [];
+    const existingAtt = attRes.data || [];
+
+    // Si hay jugadores inactivos con asistencia registrada, incluirlos
+    const extraIds = existingAtt
+      .map(a => a.player_id)
+      .filter(id => !activePlayers.find(p => p.id === id));
+
+    let extraPlayers = [];
+    if (extraIds.length > 0) {
+      const { data } = await db.from('players').select('*').in('id', extraIds);
+      extraPlayers = data || [];
+    }
+
+    const allPlayers = [...activePlayers, ...extraPlayers];
+
+    // Inicializar estado
+    attendanceState = {};
+    for (const p of allPlayers) {
+      const existing = existingAtt.find(a => a.player_id === p.id);
+      attendanceState[p.id] = existing
+        ? { estado: existing.estado, pagado: !!existing.pagado }
+        : { estado: 'pendiente', pagado: false };
+    }
+
+    attendancePlayersCache = allPlayers;
+    attendanceGameCache = game;
+    attendanceDirty = false;
+
+    renderAttendanceScreen();
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderAttendanceScreen() {
+  const g = attendanceGameCache;
+  const players = attendancePlayersCache;
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>ASISTENCIA</h2>
+      <button class="modal-close" onclick="confirmCloseAttendance()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="game-detail-header">
+        <div class="game-detail-date">${formatDateLong(g.fecha)}</div>
+        <div style="color: var(--cream-2); margin-top: 4px; font-size: 14px;">vs ${escapeHtml(g.rival)}</div>
+      </div>
+
+      <div class="attendance-stats" id="attStatGrid"></div>
+
+      <div class="att-money-card" id="attMoneyCard"></div>
+
+      <div class="att-bulk-actions">
+        <button class="att-bulk-btn" onclick="bulkAttendanceAction('jugaron')">✅ TODOS JUGARON</button>
+        <button class="att-bulk-btn" onclick="bulkAttendanceAction('avisaron')">📲 TODOS AVISARON</button>
+        <button class="att-bulk-btn" onclick="bulkAttendanceAction('limpiar')">🗑️ LIMPIAR</button>
+      </div>
+
+      <div id="attPlayersContainer">
+        ${players.map(p => renderAttendancePlayerRow(p)).join('')}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="confirmCloseAttendance()">Cancelar</button>
+      <button class="btn btn-primary" id="saveAttendanceBtn" onclick="saveAttendance()">Guardar</button>
+    </div>`;
+
+  updateAttendanceStats();
+}
+
+function renderAttendancePlayerRow(p) {
+  const st = attendanceState[p.id] || { estado: 'pendiente', pagado: false };
+  const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
+  const avatarText = p.foto_url ? '' : getInitials(p.nombre);
+  const aportacion = getAportacion(st.estado);
+
+  const jugoActive = st.estado === 'jugo' ? 'active-jugo' : '';
+  const avisoActive = st.estado === 'no_asistio' ? 'active-aviso' : '';
+  const pendActive = st.estado === 'pendiente' ? 'active-pend' : '';
+
+  const showPay = st.estado !== 'pendiente';
+  const paidClass = st.pagado ? 'paid' : '';
+
+  const amountText = aportacion > 0
+    ? `Aporta: <strong>${formatMoney(aportacion)}</strong>`
+    : '<span style="opacity: 0.6;">Sin aportación aún</span>';
+
+  return `
+    <div class="att-player-row ${st.estado}" id="attRow-${p.id}">
+      <div class="att-player-head">
+        <div class="att-player-avatar" ${avatarStyle}>${avatarText}</div>
+        <div class="att-player-info">
+          <div class="att-player-name">${escapeHtml(p.apodo || p.nombre)} <span class="att-player-num">#${p.numero}</span></div>
+          <div class="att-player-amount">${amountText}</div>
+        </div>
+        ${showPay ? `
+          <div class="att-player-pay">
+            <button class="att-pay-toggle ${paidClass}" onclick="togglePagado('${p.id}')">
+              ${st.pagado ? '💰 PAGÓ' : '⏳ DEBE'}
+            </button>
+          </div>` : ''}
+      </div>
+      <div class="att-estado-toggle">
+        <button class="att-estado-btn ${jugoActive}" onclick="setAttendanceEstado('${p.id}', 'jugo')">⚾ JUGÓ</button>
+        <button class="att-estado-btn ${avisoActive}" onclick="setAttendanceEstado('${p.id}', 'no_asistio')">📲 AVISÓ</button>
+        <button class="att-estado-btn ${pendActive}" onclick="setAttendanceEstado('${p.id}', 'pendiente')">❓ PEND</button>
+      </div>
+    </div>`;
+}
+
+function setAttendanceEstado(playerId, estado) {
+  if (!attendanceState[playerId]) {
+    attendanceState[playerId] = { estado, pagado: false };
+  } else {
+    attendanceState[playerId].estado = estado;
+    // Si pasa a pendiente, resetear pagado
+    if (estado === 'pendiente') attendanceState[playerId].pagado = false;
+  }
+  attendanceDirty = true;
+
+  // Re-render solo esa fila
+  const p = attendancePlayersCache.find(pl => pl.id === playerId);
+  if (p) {
+    const row = document.getElementById(`attRow-${playerId}`);
+    if (row) row.outerHTML = renderAttendancePlayerRow(p);
+  }
+  updateAttendanceStats();
+}
+
+function togglePagado(playerId) {
+  const st = attendanceState[playerId];
+  if (!st || st.estado === 'pendiente') return;
+
+  st.pagado = !st.pagado;
+  attendanceDirty = true;
+
+  const p = attendancePlayersCache.find(pl => pl.id === playerId);
+  if (p) {
+    const row = document.getElementById(`attRow-${playerId}`);
+    if (row) row.outerHTML = renderAttendancePlayerRow(p);
+  }
+  updateAttendanceStats();
+}
+
+function updateAttendanceStats() {
+  const states = Object.values(attendanceState);
+  const jugaron = states.filter(s => s.estado === 'jugo').length;
+  const avisaron = states.filter(s => s.estado === 'no_asistio').length;
+  const pendientes = states.filter(s => s.estado === 'pendiente').length;
+
+  const total = states.reduce((sum, s) => sum + getAportacion(s.estado), 0);
+  const cobrado = states.filter(s => s.pagado).reduce((sum, s) => sum + getAportacion(s.estado), 0);
+  const porCobrar = total - cobrado;
+
+  const statGrid = document.getElementById('attStatGrid');
+  if (statGrid) {
+    statGrid.innerHTML = `
+      <div class="att-stat-card jugo">
+        <div class="att-stat-number">${jugaron}</div>
+        <div class="att-stat-label">Jugaron</div>
+      </div>
+      <div class="att-stat-card aviso">
+        <div class="att-stat-number">${avisaron}</div>
+        <div class="att-stat-label">Avisaron</div>
+      </div>
+      <div class="att-stat-card pend">
+        <div class="att-stat-number">${pendientes}</div>
+        <div class="att-stat-label">Pendientes</div>
+      </div>`;
+  }
+
+  const moneyCard = document.getElementById('attMoneyCard');
+  if (moneyCard) {
+    moneyCard.innerHTML = `
+      <div class="att-money-label">TOTAL A APORTAR</div>
+      <div class="att-money-total"><small>$</small>${total.toLocaleString('es-MX')}</div>
+      <div class="att-money-footer">
+        <div class="cobrado">COBRADO<strong>${formatMoney(cobrado)}</strong></div>
+        ${porCobrar > 0 ? `<div class="por-cobrar">POR COBRAR<strong>${formatMoney(porCobrar)}</strong></div>` : ''}
+      </div>`;
+  }
+}
+
+function bulkAttendanceAction(action) {
+  for (const p of attendancePlayersCache) {
+    if (!attendanceState[p.id]) attendanceState[p.id] = { estado: 'pendiente', pagado: false };
+    if (action === 'jugaron') {
+      attendanceState[p.id].estado = 'jugo';
+    } else if (action === 'avisaron') {
+      attendanceState[p.id].estado = 'no_asistio';
+    } else if (action === 'limpiar') {
+      attendanceState[p.id].estado = 'pendiente';
+      attendanceState[p.id].pagado = false;
+    }
+  }
+  attendanceDirty = true;
+
+  const container = document.getElementById('attPlayersContainer');
+  if (container) {
+    container.innerHTML = attendancePlayersCache.map(p => renderAttendancePlayerRow(p)).join('');
+  }
+  updateAttendanceStats();
+}
+
+async function saveAttendance() {
+  const gameId = attendanceGameCache.id;
+  const saveBtn = document.getElementById('saveAttendanceBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+
+  try {
+    const rows = Object.entries(attendanceState).map(([playerId, s]) => ({
+      game_id: gameId,
+      player_id: playerId,
+      estado: s.estado,
+      aportacion: getAportacion(s.estado),
+      pagado: s.pagado
+    }));
+
+    const { error } = await db.from('attendance').upsert(rows, { onConflict: 'game_id,player_id' });
+    if (error) throw error;
+
+    attendanceDirty = false;
+    closeModal();
+
+    // Refrescar pantallas que muestran datos de aportaciones
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+
+    // Volver al detalle del juego para ver el resumen actualizado
+    setTimeout(() => showGameDetail(gameId), 150);
+  } catch (err) {
+    alert('Error al guardar: ' + err.message);
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Guardar';
+  }
+}
+
+function confirmCloseAttendance() {
+  if (!attendanceDirty) {
+    closeModal();
+    return;
+  }
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>¿SALIR SIN GUARDAR?</h2>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
+        <p style="color: var(--cream-2);">Hay cambios sin guardar. Se perderán si sales ahora.</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="renderAttendanceScreen()">Seguir editando</button>
+      <button class="btn btn-danger" onclick="closeModal()">Salir sin guardar</button>
+    </div>`;
 }
 
 // ============================================================
@@ -1526,6 +1878,13 @@ window.handleLogout = handleLogout;
 window.confirmDeactivate = confirmDeactivate;
 window.deactivatePlayer = deactivatePlayer;
 window.reactivatePlayer = reactivatePlayer;
+window.showAttendance = showAttendance;
+window.renderAttendanceScreen = renderAttendanceScreen;
+window.setAttendanceEstado = setAttendanceEstado;
+window.togglePagado = togglePagado;
+window.bulkAttendanceAction = bulkAttendanceAction;
+window.saveAttendance = saveAttendance;
+window.confirmCloseAttendance = confirmCloseAttendance;
 
 // INICIO
 (async () => {

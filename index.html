@@ -460,6 +460,56 @@
   .expense-detail-amount .currency { font-size: 20px; color: var(--red); opacity: 0.7; vertical-align: top; margin-right: 2px; }
   .expense-detail-amount .number { font-family: 'Bebas Neue', sans-serif; font-size: 48px; color: var(--red); letter-spacing: 1px; }
   .expense-detail-cat { font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 2px; color: var(--gold); margin-top: 4px; }
+  /* ========== PHOTO GALLERY ========== */
+  .photo-section { margin-bottom: 16px; }
+  .photo-section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .photo-section-title { font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 2px; color: var(--gold); }
+  .photo-section-count { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+  .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .photo-thumb { aspect-ratio: 1; background-size: cover; background-position: center; background-color: var(--navy-3); cursor: pointer; border-radius: 8px; position: relative; overflow: hidden; transition: transform 0.15s; }
+  .photo-thumb:active { transform: scale(0.96); }
+  .photo-thumb.more-overlay::after { content: attr(data-more); position: absolute; inset: 0; background: rgba(0, 0, 0, 0.65); color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; display: grid; place-items: center; }
+  /* Photo game card (pantalla Galería) */
+  .photo-game-card { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  .photo-game-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .photo-game-title { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1.5px; color: var(--cream); }
+  .photo-game-date { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .photo-game-result { font-family: 'Bebas Neue', sans-serif; font-size: 11px; padding: 3px 8px; border-radius: 6px; letter-spacing: 1px; flex-shrink: 0; }
+  .photo-game-result.w { background: rgba(107, 169, 107, 0.2); color: var(--green); }
+  .photo-game-result.l { background: rgba(200, 66, 66, 0.2); color: var(--red); }
+  .photo-game-result.t { background: rgba(229, 185, 74, 0.15); color: var(--gold); }
+  /* Upload zone */
+  .upload-zone { border: 2px dashed var(--gold-deep); border-radius: 14px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.15s; background: var(--navy-2); margin-bottom: 14px; }
+  .upload-zone:hover { background: var(--navy-3); border-color: var(--gold); }
+  .upload-zone-icon { font-size: 36px; margin-bottom: 6px; }
+  .upload-zone-title { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 2px; color: var(--gold); }
+  .upload-zone-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .upload-preview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 14px; }
+  .upload-preview-item { aspect-ratio: 1; background-size: cover; background-position: center; border-radius: 8px; position: relative; border: 1px solid var(--line); }
+  .upload-preview-remove { position: absolute; top: 2px; right: 2px; background: rgba(200, 66, 66, 0.9); color: white; width: 20px; height: 20px; border-radius: 50%; border: none; cursor: pointer; display: grid; place-items: center; font-size: 11px; font-weight: bold; }
+  .upload-progress { background: var(--navy-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .upload-progress-label { font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--gold); margin-bottom: 6px; }
+  .upload-progress-bar { background: var(--navy-3); height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+  .upload-progress-fill { background: linear-gradient(90deg, var(--gold) 0%, var(--gold-dark) 100%); height: 100%; transition: width 0.3s; }
+  .upload-progress-count { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; text-align: right; }
+  /* Lightbox fullscreen */
+  .lightbox-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.98); z-index: 300; display: none; flex-direction: column; animation: fadeIn 0.2s; }
+  .lightbox-overlay.show { display: flex; }
+  .lightbox-header { padding: 14px 16px; padding-top: calc(14px + env(safe-area-inset-top)); display: flex; justify-content: space-between; align-items: center; color: var(--cream); z-index: 10; }
+  .lightbox-counter { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--cream-2); letter-spacing: 1px; }
+  .lightbox-actions { display: flex; gap: 8px; }
+  .lightbox-btn { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.15); color: var(--cream); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; font-size: 16px; }
+  .lightbox-btn:active { transform: scale(0.95); }
+  .lightbox-btn.danger { color: var(--red); }
+  .lightbox-body { flex: 1; display: flex; align-items: center; justify-content: center; padding: 10px; position: relative; min-height: 0; }
+  .lightbox-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; user-select: none; -webkit-user-drag: none; }
+  .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--cream); width: 44px; height: 44px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; font-size: 20px; z-index: 2; }
+  .lightbox-nav:active { transform: translateY(-50%) scale(0.92); }
+  .lightbox-nav:disabled { opacity: 0.3; cursor: not-allowed; }
+  .lightbox-nav.prev { left: 12px; }
+  .lightbox-nav.next { right: 12px; }
+  .lightbox-footer { padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); text-align: center; color: var(--text-muted); font-size: 11px; }
+  body.lightbox-open { overflow: hidden; }
 </style>
 </head>
 <body>
@@ -501,11 +551,7 @@
   <section class="screen" id="galeria">
     <div class="gallery-subtitle">"Memorias del corazón, coqueto"</div>
     <div id="galeria-content">
-      <div class="empty-state">
-        <div class="emoji">📸</div>
-        <p>Todavía no hay fotos.</p>
-        <div class="chk">¡Ya parió la cochi!</div>
-      </div>
+      <div class="loading"><div class="spinner"></div><p>Cargando memorias...</p></div>
     </div>
   </section>
 
@@ -522,6 +568,23 @@
 
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal" id="modalContent"></div>
+</div>
+
+<div class="lightbox-overlay" id="lightboxOverlay">
+  <div class="lightbox-header">
+    <button class="lightbox-btn" id="lightboxClose" title="Cerrar">✕</button>
+    <div class="lightbox-counter" id="lightboxCounter">1 / 1</div>
+    <div class="lightbox-actions">
+      <button class="lightbox-btn" id="lightboxShare" title="Compartir">↗</button>
+      <button class="lightbox-btn danger" id="lightboxDelete" title="Eliminar" style="display: none;">🗑</button>
+    </div>
+  </div>
+  <div class="lightbox-body">
+    <button class="lightbox-nav prev" id="lightboxPrev">‹</button>
+    <img class="lightbox-img" id="lightboxImg" src="" alt="">
+    <button class="lightbox-nav next" id="lightboxNext">›</button>
+  </div>
+  <div class="lightbox-footer" id="lightboxFooter"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

@@ -38,6 +38,23 @@ function getAportacion(estado) {
   return APORTACION_PENDIENTE;
 }
 
+// Categorías de gastos
+const EXPENSE_CATEGORIES = [
+  { value: 'campo', label: 'Campo', icon: '🏟️' },
+  { value: 'pelotas', label: 'Pelotas', icon: '⚾' },
+  { value: 'liga', label: 'Liga', icon: '🏆' },
+  { value: 'uniformes', label: 'Uniformes', icon: '👕' },
+  { value: 'otros', label: 'Otros', icon: '📋' }
+];
+
+function getCategoryIcon(cat) {
+  return EXPENSE_CATEGORIES.find(c => c.value === cat)?.icon || '📋';
+}
+
+function getCategoryLabel(cat) {
+  return EXPENSE_CATEGORIES.find(c => c.value === cat)?.label || cat;
+}
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -424,17 +441,21 @@ async function loadHome() {
 async function loadTesoreria() {
   const container = document.getElementById('tesoreria-content');
   try {
-    const [balanceRes, catRes, playerStatusRes, contribRes] = await Promise.all([
+    const [balanceRes, catRes, playerStatusRes, contribRes, expensesRes, allExpensesCountRes] = await Promise.all([
       db.from('v_team_balance').select('*').maybeSingle(),
       db.from('v_expenses_by_category').select('*'),
       db.from('v_player_status').select('*').eq('activo', true).order('numero'),
-      db.from('v_contribuciones_publicas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false }).limit(8)
+      db.from('v_contribuciones_publicas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false }).limit(6),
+      db.from('expenses').select('*').order('fecha', { ascending: false }).limit(5),
+      db.from('expenses').select('*', { count: 'exact', head: true })
     ]);
 
     const balance = balanceRes.data || { balance: 0, total_ingresos: 0, total_egresos: 0, ingresos_cuotas: 0, ingresos_extra: 0 };
     const categories = catRes.data || [];
     const playerStatus = playerStatusRes.data || [];
     const contribuciones = contribRes.data || [];
+    const recentExpenses = expensesRes.data || [];
+    const totalExpensesCount = allExpensesCountRes.count || 0;
     const totalGastos = categories.reduce((s, c) => s + Number(c.total), 0);
 
     let html = `
@@ -471,8 +492,9 @@ async function loadTesoreria() {
         const tags = [];
         if (!c.publico) tags.push('<span class="tag privado">🔒 PRIVADO</span>');
         if (c.anonimo) tags.push('<span class="tag anonimo">🤫 ANÓN</span>');
+        const clickAttr = state.isTesorero ? `onclick="showContribucionForm('${c.id}')"` : '';
         html += `
-          <div class="contrib-row">
+          <div class="contrib-row" ${clickAttr} style="${state.isTesorero ? 'cursor: pointer;' : ''}">
             <div class="contrib-row-icon ${c.origen}">${origenIcon}</div>
             <div class="contrib-row-body">
               <div class="contrib-row-donante ${c.anonimo ? 'anonimo' : ''}">${escapeHtml(c.donante_display)}</div>
@@ -486,24 +508,17 @@ async function loadTesoreria() {
           </div>`;
       }
       html += `</div>`;
-    } else if (state.isTesorero) {
-      html += `
-        <div class="empty-state" style="padding: 24px;">
-          <div class="emoji" style="font-size: 36px;">💝</div>
-          <p style="font-size: 13px;">Todavía no hay ingresos extra.</p>
-          <div class="chk">Toca el botón dorado para registrar una aportación voluntaria o un patrocinador</div>
-        </div>`;
     }
 
+    // Gastos por categoría (tarjetas clicables)
     if (categories.length > 0) {
       html += `<div class="section-title">Gastos por categoría</div><div class="cat-grid">`;
-      const iconMap = { campo: '🏟️', pelotas: '⚾', liga: '🏆', uniformes: '👕', otros: '📋' };
       for (const cat of categories) {
         const pct = totalGastos > 0 ? Math.round((Number(cat.total) / totalGastos) * 100) : 0;
         html += `
-          <div class="cat-card">
+          <div class="cat-card" onclick="showExpenseList('${cat.categoria}')">
             <div class="cat-head">
-              <span>${iconMap[cat.categoria] || '📋'}</span>
+              <span>${getCategoryIcon(cat.categoria)}</span>
               <span style="font-size: 10px; color: var(--text-muted); font-family: monospace;">${pct}%</span>
             </div>
             <div class="cat-name">${escapeHtml(cat.categoria)}</div>
@@ -512,6 +527,38 @@ async function loadTesoreria() {
           </div>`;
       }
       html += `</div>`;
+    }
+
+    // Últimos gastos
+    if (recentExpenses.length > 0) {
+      html += `
+        <div class="section-title" style="display: flex; justify-content: space-between; align-items: baseline;">
+          <span>Últimos gastos</span>
+          <span style="font-size: 11px; color: var(--gold); cursor: pointer; letter-spacing: 1px;" onclick="showExpenseList()">VER TODOS (${totalExpensesCount}) →</span>
+        </div>
+        <div class="list-card">`;
+      for (const e of recentExpenses) {
+        const fecha = new Date(e.fecha + 'T12:00:00');
+        const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+        const clickAttr = state.isTesorero ? `onclick="showExpenseDetail('${e.id}')"` : '';
+        html += `
+          <div class="expense-row" ${clickAttr}>
+            <div class="expense-row-icon">${getCategoryIcon(e.categoria)}</div>
+            <div class="expense-row-body">
+              <div class="expense-row-desc">${escapeHtml(e.descripcion || getCategoryLabel(e.categoria))}</div>
+              <div class="expense-row-meta">${fechaTxt} · ${escapeHtml(e.categoria)}</div>
+            </div>
+            <div class="expense-row-value">−${formatMoney(e.monto)}</div>
+          </div>`;
+      }
+      html += `</div>`;
+    } else if (state.isTesorero && contribuciones.length === 0) {
+      html += `
+        <div class="empty-state" style="padding: 24px;">
+          <div class="emoji" style="font-size: 36px;">💸</div>
+          <p style="font-size: 13px;">Sin movimientos todavía.</p>
+          <div class="chk">Toca el botón dorado para registrar ingresos o gastos</div>
+        </div>`;
     }
 
     if (playerStatus.length > 0) {
@@ -1076,13 +1123,14 @@ async function showGameDetail(gameId) {
     <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
 
   try {
-    const [gameRes, attRes] = await Promise.all([
+    const [gameRes, attRes, expRes] = await Promise.all([
       db.from('games').select('*').eq('id', gameId).maybeSingle(),
-      db.from('attendance').select('estado, aportacion, pagado').eq('game_id', gameId)
+      db.from('attendance').select('estado, aportacion, pagado').eq('game_id', gameId),
+      db.from('expenses').select('*').eq('game_id', gameId).order('fecha', { ascending: false })
     ]);
     if (gameRes.error) throw gameRes.error;
     if (!gameRes.data) throw new Error('Juego no encontrado');
-    renderGameDetail(gameRes.data, attRes.data || []);
+    renderGameDetail(gameRes.data, attRes.data || [], expRes.data || []);
   } catch (err) {
     modalContent.innerHTML = `
       <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
@@ -1090,7 +1138,7 @@ async function showGameDetail(gameId) {
   }
 }
 
-function renderGameDetail(g, attendanceRecords) {
+function renderGameDetail(g, attendanceRecords, expensesRecords) {
   // Fecha grande
   const dateHeader = `
     <div class="game-detail-header">
@@ -1225,6 +1273,40 @@ function renderGameDetail(g, attendanceRecords) {
     </div>
     ${g.notas ? `<div class="notes-box">📝 ${escapeHtml(g.notas)}</div>` : ''}`;
 
+  // Sección de gastos del juego
+  let expensesSection = '';
+  const gastos = expensesRecords || [];
+  const totalGastosJuego = gastos.reduce((s, e) => s + Number(e.monto || 0), 0);
+
+  if (gastos.length > 0) {
+    let items = '';
+    for (const e of gastos) {
+      const clickAttr = state.isTesorero ? `onclick="showExpenseDetail('${e.id}')"` : '';
+      items += `
+        <div class="expenses-mini-item" ${clickAttr} ${state.isTesorero ? 'style="cursor: pointer;"' : ''}>
+          <span>${getCategoryIcon(e.categoria)} ${escapeHtml(e.descripcion || getCategoryLabel(e.categoria))}</span>
+          <span class="amt">−${formatMoney(e.monto)}</span>
+        </div>`;
+    }
+    expensesSection = `
+      <div class="expenses-mini-summary">
+        <div class="expenses-mini-title">
+          💸 GASTOS DEL JUEGO
+          <strong>${formatMoney(totalGastosJuego)}</strong>
+        </div>
+        ${items}
+        ${state.isTesorero ? `
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px; padding: 8px;" onclick="showExpenseForm(null, '${g.id}')">
+            + Agregar otro gasto
+          </button>` : ''}
+      </div>`;
+  } else if (state.isTesorero) {
+    expensesSection = `
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="showExpenseForm(null, '${g.id}')">
+        💸 Agregar gasto a este juego
+      </button>`;
+  }
+
   // Footer
   let footerButtons = '';
   if (state.isTesorero) {
@@ -1246,6 +1328,7 @@ function renderGameDetail(g, attendanceRecords) {
       ${captureButton}
       ${attendanceMini}
       ${attendanceButton}
+      ${expensesSection}
       ${infoRows}
     </div>
     ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
@@ -2277,6 +2360,392 @@ async function deleteContribucion(contribId) {
 }
 
 // ============================================================
+// GASTOS (expenses)
+// ============================================================
+
+// FAB picker — pregunta "¿Ingreso o Gasto?" antes de abrir el form correcto
+function showFabPicker() {
+  openModal(`
+    <div class="modal-header">
+      <h2>¿QUÉ VAS A REGISTRAR?</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="fab-picker-grid">
+        <div class="fab-picker-btn ingreso" onclick="closeModal(); setTimeout(() => showContribucionForm(), 100);">
+          <div class="fab-picker-icon">💰</div>
+          <div class="fab-picker-body">
+            <div class="fab-picker-title">INGRESO</div>
+            <div class="fab-picker-sub">Voluntaria, patrocinador, donación</div>
+          </div>
+          <div class="fab-picker-arrow">→</div>
+        </div>
+        <div class="fab-picker-btn egreso" onclick="closeModal(); setTimeout(() => showExpenseForm(), 100);">
+          <div class="fab-picker-icon">💸</div>
+          <div class="fab-picker-body">
+            <div class="fab-picker-title">GASTO</div>
+            <div class="fab-picker-sub">Campo, pelotas, liga, uniformes...</div>
+          </div>
+          <div class="fab-picker-arrow">→</div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function showExpenseList(filterCategoria) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const { data, error } = await db.from('expenses').select('*').order('fecha', { ascending: false });
+    if (error) throw error;
+    renderExpenseList(data || [], filterCategoria || 'todas');
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderExpenseList(allExpenses, activeFilter) {
+  const filtered = activeFilter === 'todas'
+    ? allExpenses
+    : allExpenses.filter(e => e.categoria === activeFilter);
+
+  const totalFiltrado = filtered.reduce((s, e) => s + Number(e.monto || 0), 0);
+
+  const chips = [{ value: 'todas', label: 'Todos', icon: '📊' }, ...EXPENSE_CATEGORIES]
+    .map(c => `
+      <div class="filter-chip ${activeFilter === c.value ? 'active' : ''}" onclick="filterExpenseList('${c.value}')">
+        ${c.icon} ${c.label}
+      </div>`).join('');
+
+  let listHtml = '';
+  if (filtered.length === 0) {
+    listHtml = `
+      <div class="empty-state" style="padding: 30px;">
+        <div class="emoji" style="font-size: 40px;">📭</div>
+        <p style="font-size: 13px;">Sin gastos en esta categoría.</p>
+      </div>`;
+  } else {
+    listHtml = '<div class="list-card">';
+    for (const e of filtered) {
+      const fecha = new Date(e.fecha + 'T12:00:00');
+      const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+      listHtml += `
+        <div class="expense-row" onclick="showExpenseDetail('${e.id}')">
+          <div class="expense-row-icon">${getCategoryIcon(e.categoria)}</div>
+          <div class="expense-row-body">
+            <div class="expense-row-desc">${escapeHtml(e.descripcion || getCategoryLabel(e.categoria))}</div>
+            <div class="expense-row-meta">${fechaTxt} · ${escapeHtml(e.categoria)}${e.game_id ? ' · 📅 asociado a juego' : ''}</div>
+          </div>
+          <div class="expense-row-value">−${formatMoney(e.monto)}</div>
+        </div>`;
+    }
+    listHtml += '</div>';
+  }
+
+  // Guardar cache para re-filtrar sin consultar DB
+  window._expenseListCache = allExpenses;
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>GASTOS</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding-bottom: 80px;">
+      <div class="filter-chips" id="expenseFilterChips">${chips}</div>
+      <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 10px; text-align: center;">
+        ${filtered.length} gasto${filtered.length !== 1 ? 's' : ''}
+      </div>
+      ${listHtml}
+    </div>
+    <div class="modal-footer sticky">
+      <div class="expenses-total-bar" style="flex: 1; margin-bottom: 0;">
+        <div class="expenses-total-bar-label">TOTAL ${activeFilter === 'todas' ? 'GENERAL' : activeFilter.toUpperCase()}</div>
+        <div class="expenses-total-bar-value">${formatMoney(totalFiltrado)}</div>
+      </div>
+    </div>`;
+}
+
+function filterExpenseList(categoria) {
+  const cache = window._expenseListCache || [];
+  renderExpenseList(cache, categoria);
+}
+
+async function showExpenseDetail(expenseId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const { data: e, error } = await db.from('expenses').select('*').eq('id', expenseId).maybeSingle();
+    if (error) throw error;
+    if (!e) throw new Error('Gasto no encontrado');
+
+    // Si tiene game_id, cargar info del juego
+    let gameInfo = null;
+    if (e.game_id) {
+      const { data: g } = await db.from('games').select('id, fecha, rival').eq('id', e.game_id).maybeSingle();
+      gameInfo = g;
+    }
+
+    renderExpenseDetail(e, gameInfo);
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderExpenseDetail(e, gameInfo) {
+  const fecha = new Date(e.fecha + 'T12:00:00');
+  const fechaTxt = fecha.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>GASTO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="expense-detail-amount">
+        <div><span class="currency">$</span><span class="number">${Number(e.monto).toLocaleString('es-MX', { maximumFractionDigits: 0 })}</span></div>
+        <div class="expense-detail-cat">${getCategoryIcon(e.categoria)} ${escapeHtml(e.categoria).toUpperCase()}</div>
+      </div>
+
+      ${e.descripcion ? `
+        <div class="notes-box" style="font-style: normal;">
+          📝 ${escapeHtml(e.descripcion)}
+        </div>` : ''}
+
+      <div class="player-detail-info">
+        <div class="detail-row"><span class="detail-label">Fecha</span><span class="detail-value">${fechaTxt}</span></div>
+        ${gameInfo ? `
+          <div class="detail-row">
+            <span class="detail-label">Juego asociado</span>
+            <span class="detail-value gold" style="cursor: pointer;" onclick="showGameDetail('${gameInfo.id}')">vs ${escapeHtml(gameInfo.rival || '')} →</span>
+          </div>` : ''}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="confirmDeleteExpense('${e.id}')">Eliminar</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
+      <button class="btn btn-primary" onclick="showExpenseForm('${e.id}')">Editar</button>
+    </div>`;
+}
+
+async function showExpenseForm(expenseId, prefillGameId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${expenseId ? 'EDITANDO...' : 'NUEVO GASTO'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  let expense = null;
+  if (expenseId) {
+    const { data, error } = await db.from('expenses').select('*').eq('id', expenseId).maybeSingle();
+    if (error) {
+      modalContent.innerHTML = `
+        <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${errorBox('No se pudo cargar.', error.message)}</div>`;
+      return;
+    }
+    expense = data;
+  } else if (prefillGameId) {
+    expense = { game_id: prefillGameId };
+  }
+
+  // Cargar juegos recientes para el selector (últimos 30 días a futuro + 60 atrás)
+  const { data: games } = await db.from('games')
+    .select('id, fecha, rival')
+    .order('fecha', { ascending: false })
+    .limit(30);
+
+  renderExpenseForm(expense, games || []);
+}
+
+function renderExpenseForm(e, recentGames) {
+  const isEdit = !!(e && e.id);
+  const today = new Date().toISOString().substring(0, 10);
+  const currentCategoria = e?.categoria || 'campo';
+  const currentMonto = e?.monto || '';
+  const currentFecha = e?.fecha || today;
+  const currentDescripcion = e?.descripcion || '';
+  const currentGameId = e?.game_id || '';
+
+  const catButtons = EXPENSE_CATEGORIES.map(cat => `
+    <div class="cat-visual-btn ${currentCategoria === cat.value ? 'active' : ''}" data-cat="${cat.value}">
+      <div class="cat-visual-icon">${cat.icon}</div>
+      <div class="cat-visual-label">${cat.label}</div>
+    </div>
+  `).join('');
+
+  const gameOptions = recentGames.map(g => {
+    const d = new Date(g.fecha + 'T12:00:00');
+    const dStr = d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    return `<option value="${g.id}" ${currentGameId === g.id ? 'selected' : ''}>${dStr} · vs ${escapeHtml(g.rival || '')}</option>`;
+  }).join('');
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>${isEdit ? 'EDITAR GASTO' : 'NUEVO GASTO'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="expenseForm">
+        <input type="hidden" id="expenseId" value="${e?.id || ''}">
+        <div id="expenseFormError"></div>
+
+        <div class="form-group">
+          <label class="form-label">Categoría</label>
+          <div class="cat-visual-grid" id="catVisualGrid">${catButtons}</div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Monto ($)</label>
+            <input type="number" class="form-input" id="expenseMonto" value="${currentMonto}" required min="1" step="1" inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" id="expenseFecha" value="${currentFecha}" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Descripción</label>
+          <input type="text" class="form-input" id="expenseDescripcion" value="${escapeHtml(currentDescripcion)}" placeholder="Ej. Renta de campo vs Águilas">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Asociar a un juego (opcional)</label>
+          <select class="form-select" id="expenseGameId">
+            <option value="">— Sin asociar —</option>
+            ${gameOptions}
+          </select>
+          <div class="form-hint">Útil para ver "cuánto nos costó este juego"</div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      ${isEdit ? `<button class="btn btn-danger" onclick="confirmDeleteExpense('${e.id}')">Eliminar</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="saveExpenseBtn">Guardar</button>
+    </div>`;
+
+  // Estado local
+  const formState = { categoria: currentCategoria };
+
+  // Listeners para botones de categoría
+  document.querySelectorAll('.cat-visual-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      formState.categoria = btn.dataset.cat;
+      document.querySelectorAll('.cat-visual-btn').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  document.getElementById('saveExpenseBtn').addEventListener('click', () => saveExpense(formState));
+}
+
+async function saveExpense(formState) {
+  const errorDiv = document.getElementById('expenseFormError');
+  const saveBtn = document.getElementById('saveExpenseBtn');
+
+  const id = document.getElementById('expenseId').value;
+  const monto = parseFloat(document.getElementById('expenseMonto').value);
+  const fecha = document.getElementById('expenseFecha').value;
+  const descripcion = document.getElementById('expenseDescripcion').value.trim() || null;
+  const game_id = document.getElementById('expenseGameId').value || null;
+  const categoria = formState.categoria;
+
+  if (isNaN(monto) || monto <= 0) {
+    errorDiv.innerHTML = '<div class="form-error">Ingresa un monto válido</div>';
+    return;
+  }
+  if (!fecha) {
+    errorDiv.innerHTML = '<div class="form-error">Selecciona la fecha</div>';
+    return;
+  }
+  if (!categoria) {
+    errorDiv.innerHTML = '<div class="form-error">Selecciona una categoría</div>';
+    return;
+  }
+
+  const payload = { fecha, monto, categoria, descripcion, game_id };
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+  errorDiv.innerHTML = '';
+
+  try {
+    let result;
+    if (id) result = await db.from('expenses').update(payload).eq('id', id);
+    else result = await db.from('expenses').insert(payload);
+    if (result.error) throw result.error;
+
+    closeModal();
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Guardar';
+  }
+}
+
+function confirmDeleteExpense(expenseId) {
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>ELIMINAR GASTO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
+        <p style="color: var(--cream-2); line-height: 1.6;">
+          Esta acción <strong style="color: var(--red);">NO se puede deshacer</strong>.
+          <br><br>
+          Se recalcularán automáticamente el saldo del equipo y la categoría.
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="showExpenseDetail('${expenseId}')">Cancelar</button>
+      <button class="btn btn-danger" onclick="deleteExpense('${expenseId}')">Sí, eliminar</button>
+    </div>`;
+}
+
+async function deleteExpense(expenseId) {
+  try {
+    const { error } = await db.from('expenses').delete().eq('id', expenseId);
+    if (error) throw error;
+    closeModal();
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// ============================================================
 // NAVEGACIÓN
 // ============================================================
 const screens = document.querySelectorAll('.screen');
@@ -2323,7 +2792,7 @@ navItems.forEach(btn => {
 document.getElementById('fabAdd').addEventListener('click', () => {
   if (state.currentScreen === 'roster') showPlayerForm();
   else if (state.currentScreen === 'calendario') showGameForm();
-  else if (state.currentScreen === 'tesoreria') showContribucionForm();
+  else if (state.currentScreen === 'tesoreria') showFabPicker();
 });
 
 // Exponer funciones globales (para onclick)
@@ -2350,6 +2819,13 @@ window.confirmCloseAttendance = confirmCloseAttendance;
 window.showContribucionForm = showContribucionForm;
 window.confirmDeleteContribucion = confirmDeleteContribucion;
 window.deleteContribucion = deleteContribucion;
+window.showFabPicker = showFabPicker;
+window.showExpenseList = showExpenseList;
+window.filterExpenseList = filterExpenseList;
+window.showExpenseDetail = showExpenseDetail;
+window.showExpenseForm = showExpenseForm;
+window.confirmDeleteExpense = confirmDeleteExpense;
+window.deleteExpense = deleteExpense;
 
 // INICIO
 (async () => {

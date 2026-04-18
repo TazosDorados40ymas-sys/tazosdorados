@@ -3294,6 +3294,22 @@ async function uploadSinglePhoto(file, gameId) {
 let deferredInstallPrompt = null;
 
 function initPWA() {
+  // Desactivar pinch-to-zoom en iOS (Safari ignora maximum-scale del meta viewport)
+  // Estos listeners bloquean el gesto nativo de zoom pero dejan todo lo demás funcionar
+  document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
+
+  // Doble-tap zoom en iOS (evento específico)
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 300) {
+      e.preventDefault();
+    }
+    lastTouchEnd = now;
+  }, { passive: false });
+
   // 1. Registrar service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').then((reg) => {

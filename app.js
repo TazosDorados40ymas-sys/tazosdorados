@@ -279,17 +279,21 @@ document.getElementById('adminBtn').addEventListener('click', () => {
 async function loadHome() {
   const container = document.getElementById('home-content');
   try {
-    const [nextGameRes, recordRes, balanceRes, expensesRes] = await Promise.all([
+    const [nextGameRes, recordRes, balanceRes, expensesRes, contribRes, sponsorsRes] = await Promise.all([
       db.from('v_next_game').select('*').maybeSingle(),
       db.from('v_season_record').select('*').maybeSingle(),
       db.from('v_team_balance').select('*').maybeSingle(),
-      db.from('expenses').select('*').order('fecha', { ascending: false }).limit(4)
+      db.from('expenses').select('*').order('fecha', { ascending: false }).limit(6),
+      db.from('v_contribuciones_publicas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false }).limit(6),
+      db.from('v_patrocinadores').select('*').limit(6)
     ]);
 
     const nextGame = nextGameRes.data;
     const record = recordRes.data || { wins: 0, losses: 0, ties: 0 };
     const balance = balanceRes.data || { balance: 0, total_ingresos: 0 };
     const recentExpenses = expensesRes.data || [];
+    const recentContribs = contribRes.data || [];
+    const sponsors = sponsorsRes.data || [];
 
     let html = '';
 
@@ -343,19 +347,65 @@ async function loadHome() {
         <div class="identity-sub">Tazos dorados, diamantes en bruto.<br>Un solo equipo.</div>
       </div>`;
 
-    if (recentExpenses.length > 0) {
+    // Vitrina de patrocinadores
+    if (sponsors.length > 0) {
+      html += `
+        <div class="sponsors-section">
+          <div class="sponsors-title">
+            <div class="sponsors-title-label">🤝 NUESTROS PATROCINADORES</div>
+            <div class="sponsors-title-sub">"Gracias, coquetos"</div>
+          </div>
+          <div class="sponsors-grid">`;
+      for (const s of sponsors) {
+        html += `
+          <div class="sponsor-card">
+            <div class="sponsor-card-icon">🏆</div>
+            <div class="sponsor-card-name">${escapeHtml(s.nombre)}</div>
+            <div class="sponsor-card-amount">${formatMoney(s.total_aportado)}</div>
+            <div class="sponsor-card-meta">${s.num_contribuciones} aportación${s.num_contribuciones > 1 ? 'es' : ''}</div>
+          </div>`;
+      }
+      html += `</div></div>`;
+    }
+
+    // Últimos movimientos — mezcla gastos (egresos) + contribuciones (ingresos)
+    const movements = [
+      ...recentExpenses.map(e => ({
+        tipo: 'egreso',
+        fecha: e.fecha,
+        titulo: e.descripcion || e.categoria,
+        sub: e.categoria,
+        monto: Number(e.monto)
+      })),
+      ...recentContribs.map(c => ({
+        tipo: 'ingreso',
+        fecha: c.fecha,
+        titulo: c.donante_display,
+        sub: c.concepto || (c.origen === 'jugador' ? 'Aportación voluntaria' : c.origen === 'patrocinador' ? 'Patrocinio' : 'Donación'),
+        monto: Number(c.monto),
+        origen: c.origen,
+        anonimo: c.anonimo
+      }))
+    ].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 5);
+
+    if (movements.length > 0) {
       html += `<div class="section-title">Últimos movimientos</div><div class="list-card">`;
-      for (const exp of recentExpenses) {
-        const fecha = new Date(exp.fecha + 'T12:00:00');
+      for (const m of movements) {
+        const fecha = new Date(m.fecha + 'T12:00:00');
         const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+        const isIngreso = m.tipo === 'ingreso';
+        const iconClass = isIngreso ? 'in' : 'out';
+        const arrow = isIngreso ? '↓' : '↑';
+        const valueClass = isIngreso ? 'pos' : 'neg';
+        const valueSign = isIngreso ? '+' : '−';
         html += `
           <div class="list-row">
-            <div class="list-row-icon out">↑</div>
+            <div class="list-row-icon ${iconClass}">${arrow}</div>
             <div class="list-row-body">
-              <div class="list-row-title">${escapeHtml(exp.descripcion || exp.categoria)}</div>
-              <div class="list-row-sub">${fechaTxt} · ${escapeHtml(exp.categoria)}</div>
+              <div class="list-row-title">${escapeHtml(m.titulo)}</div>
+              <div class="list-row-sub">${fechaTxt} · ${escapeHtml(m.sub)}</div>
             </div>
-            <div class="list-row-value neg">−${formatMoney(exp.monto)}</div>
+            <div class="list-row-value ${valueClass}">${valueSign}${formatMoney(m.monto)}</div>
           </div>`;
       }
       html += `</div>`;
@@ -374,15 +424,17 @@ async function loadHome() {
 async function loadTesoreria() {
   const container = document.getElementById('tesoreria-content');
   try {
-    const [balanceRes, catRes, playerStatusRes] = await Promise.all([
+    const [balanceRes, catRes, playerStatusRes, contribRes] = await Promise.all([
       db.from('v_team_balance').select('*').maybeSingle(),
       db.from('v_expenses_by_category').select('*'),
-      db.from('v_player_status').select('*').eq('activo', true).order('numero')
+      db.from('v_player_status').select('*').eq('activo', true).order('numero'),
+      db.from('v_contribuciones_publicas').select('*').order('fecha', { ascending: false }).order('created_at', { ascending: false }).limit(8)
     ]);
 
-    const balance = balanceRes.data || { balance: 0, total_ingresos: 0, total_egresos: 0 };
+    const balance = balanceRes.data || { balance: 0, total_ingresos: 0, total_egresos: 0, ingresos_cuotas: 0, ingresos_extra: 0 };
     const categories = catRes.data || [];
     const playerStatus = playerStatusRes.data || [];
+    const contribuciones = contribRes.data || [];
     const totalGastos = categories.reduce((s, c) => s + Number(c.total), 0);
 
     let html = `
@@ -394,7 +446,54 @@ async function loadTesoreria() {
           <span><span class="dot g"></span>Entradas: ${formatMoney(balance.total_ingresos)}</span>
           <span><span class="dot r"></span>Salidas: ${formatMoney(balance.total_egresos)}</span>
         </div>
+      </div>
+
+      <div class="income-split-grid">
+        <div class="income-mini-card cuotas">
+          <div class="income-mini-label">Cuotas cobradas</div>
+          <div class="income-mini-value"><small>$</small>${Number(balance.ingresos_cuotas || 0).toLocaleString('es-MX', { maximumFractionDigits: 0 })}</div>
+          <div class="income-mini-sub">por asistencia</div>
+        </div>
+        <div class="income-mini-card extra">
+          <div class="income-mini-label">Ingresos extra</div>
+          <div class="income-mini-value"><small>$</small>${Number(balance.ingresos_extra || 0).toLocaleString('es-MX', { maximumFractionDigits: 0 })}</div>
+          <div class="income-mini-sub">voluntarias + patrocinio</div>
+        </div>
       </div>`;
+
+    // Lista de contribuciones recientes
+    if (contribuciones.length > 0) {
+      html += `<div class="section-title">Contribuciones recientes</div><div class="list-card">`;
+      for (const c of contribuciones) {
+        const origenIcon = c.origen === 'jugador' ? '⚾' : c.origen === 'patrocinador' ? '🤝' : '💝';
+        const fecha = new Date(c.fecha + 'T12:00:00');
+        const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+        const tags = [];
+        if (!c.publico) tags.push('<span class="tag privado">🔒 PRIVADO</span>');
+        if (c.anonimo) tags.push('<span class="tag anonimo">🤫 ANÓN</span>');
+        html += `
+          <div class="contrib-row">
+            <div class="contrib-row-icon ${c.origen}">${origenIcon}</div>
+            <div class="contrib-row-body">
+              <div class="contrib-row-donante ${c.anonimo ? 'anonimo' : ''}">${escapeHtml(c.donante_display)}</div>
+              <div class="contrib-row-meta">
+                <span>${fechaTxt}</span>
+                ${c.concepto ? `<span>· ${escapeHtml(c.concepto)}</span>` : ''}
+                ${tags.join('')}
+              </div>
+            </div>
+            <div class="contrib-row-value">+${formatMoney(c.monto)}</div>
+          </div>`;
+      }
+      html += `</div>`;
+    } else if (state.isTesorero) {
+      html += `
+        <div class="empty-state" style="padding: 24px;">
+          <div class="emoji" style="font-size: 36px;">💝</div>
+          <p style="font-size: 13px;">Todavía no hay ingresos extra.</p>
+          <div class="chk">Toca el botón dorado para registrar una aportación voluntaria o un patrocinador</div>
+        </div>`;
+    }
 
     if (categories.length > 0) {
       html += `<div class="section-title">Gastos por categoría</div><div class="cat-grid">`;
@@ -413,16 +512,30 @@ async function loadTesoreria() {
           </div>`;
       }
       html += `</div>`;
-    } else {
-      html += `<div class="empty-state"><div class="emoji">💸</div><p>Todavía no hay gastos.</p></div>`;
     }
 
     if (playerStatus.length > 0) {
       html += `<div class="section-title">Estado por jugador</div><div class="list-card">`;
       for (const p of playerStatus) {
         const deuda = Number(p.deuda_pendiente) || 0;
-        const statusTxt = deuda > 0 ? 'Sin tanta chimichanga 😅' : 'Tazo al corriente ✨';
-        const pill = deuda > 0 ? `<div class="debt-pill bad">−${formatMoney(deuda)}</div>` : `<div class="debt-pill ok">OK</div>`;
+        const excedente = Number(p.excedente_fondo) || 0;
+        const voluntarias = Number(p.total_voluntarias) || 0;
+
+        let statusTxt, pill;
+        if (deuda > 0) {
+          statusTxt = 'Sin tanta chimichanga 😅';
+          pill = `<div class="debt-pill bad">−${formatMoney(deuda)}</div>`;
+        } else if (excedente > 0) {
+          statusTxt = `¡Diamante en bruto! Aportó ${formatMoney(voluntarias)} ✨`;
+          pill = `<div class="debt-pill credit">+${formatMoney(excedente)}</div>`;
+        } else if (voluntarias > 0) {
+          statusTxt = `Tazo al corriente + aportó ${formatMoney(voluntarias)} ✨`;
+          pill = `<div class="debt-pill ok">OK ✨</div>`;
+        } else {
+          statusTxt = 'Tazo al corriente ✨';
+          pill = `<div class="debt-pill ok">OK</div>`;
+        }
+
         const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
         const avatarText = p.foto_url ? '' : getInitials(p.nombre);
         html += `
@@ -445,7 +558,8 @@ async function loadTesoreria() {
           ◆ Si juegas: aportas <strong style="color: var(--gold)">$100</strong><br>
           ◆ Si no puedes asistir: aportas <strong style="color: var(--gold)">$50</strong><br>
           ◆ Cubre Liga, Campo, Pelotas y Uniformes<br>
-          ◆ El excedente va al fondo de uniformes
+          ◆ El excedente va al fondo de uniformes<br>
+          ◆ Aportaciones voluntarias cubren deuda primero
         </div>
       </div>`;
 
@@ -1816,6 +1930,353 @@ function confirmCloseAttendance() {
 }
 
 // ============================================================
+// CONTRIBUCIONES (voluntarias + patrocinadores)
+// ============================================================
+const CONCEPTOS_SUGERIDOS = ['General', 'Uniformes', 'Pelotas', 'Campo', 'Liga', 'Gasolina'];
+
+async function showContribucionForm(contribId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${contribId ? 'EDITANDO...' : 'NUEVA CONTRIBUCIÓN'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  let contrib = null;
+  // Cargar jugadores activos para el selector
+  const { data: players, error: playersErr } = await db.from('players').select('id, numero, nombre, apodo').eq('activo', true).order('numero');
+  if (playersErr) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', playersErr.message)}</div>`;
+    return;
+  }
+
+  if (contribId) {
+    const { data, error } = await db.from('contribuciones').select('*').eq('id', contribId).maybeSingle();
+    if (error) {
+      modalContent.innerHTML = `
+        <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${errorBox('No se pudo cargar.', error.message)}</div>`;
+      return;
+    }
+    contrib = data;
+  }
+
+  renderContribucionForm(contrib, players || []);
+}
+
+function renderContribucionForm(c, players) {
+  const isEdit = !!c;
+  const today = new Date().toISOString().substring(0, 10);
+  const currentOrigen = c?.origen || 'jugador';
+  const currentPlayerId = c?.player_id || '';
+  const currentNombre = c?.nombre_donante || '';
+  const currentMonto = c?.monto || '';
+  const currentFecha = c?.fecha || today;
+  const currentConcepto = c?.concepto || 'General';
+  const currentNotas = c?.notas || '';
+
+  // Visibilidad actual: publico, anonimo
+  let visibilidad = 'publico'; // publico_nombre, publico_anonimo, privado
+  if (c) {
+    if (!c.publico) visibilidad = 'privado';
+    else if (c.anonimo) visibilidad = 'anonimo';
+    else visibilidad = 'publico';
+  }
+
+  const playerOptions = players.map(p =>
+    `<option value="${p.id}" ${currentPlayerId === p.id ? 'selected' : ''}>#${p.numero} — ${escapeHtml(p.apodo || p.nombre)}</option>`
+  ).join('');
+
+  const conceptChips = CONCEPTOS_SUGERIDOS.map(concepto => `
+    <button type="button" class="concept-chip ${currentConcepto === concepto ? 'active' : ''}" data-concept="${concepto}">${concepto}</button>
+  `).join('');
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>${isEdit ? 'EDITAR CONTRIBUCIÓN' : 'NUEVA CONTRIBUCIÓN'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="contribForm">
+        <input type="hidden" id="contribId" value="${c?.id || ''}">
+        <div id="contribFormError"></div>
+
+        <div class="form-group">
+          <label class="form-label">¿De quién viene?</label>
+          <div class="contrib-type-selector">
+            <div class="contrib-type-btn ${currentOrigen === 'jugador' ? 'active' : ''}" data-origen="jugador">
+              <div class="contrib-type-icon">⚾</div>
+              <div class="contrib-type-label">Jugador</div>
+            </div>
+            <div class="contrib-type-btn ${currentOrigen === 'patrocinador' ? 'active' : ''}" data-origen="patrocinador">
+              <div class="contrib-type-icon">🤝</div>
+              <div class="contrib-type-label">Patrocinador</div>
+            </div>
+            <div class="contrib-type-btn ${currentOrigen === 'otro' ? 'active' : ''}" data-origen="otro">
+              <div class="contrib-type-icon">💝</div>
+              <div class="contrib-type-label">Otro</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="donanteFields">
+          <!-- populated based on origen -->
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Visibilidad</label>
+          <div class="visibility-selector" id="visibilityFields">
+            <!-- populated based on origen -->
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Monto ($)</label>
+            <input type="number" class="form-input" id="contribMonto" value="${currentMonto}" required min="1" step="1" inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" class="form-input" id="contribFecha" value="${currentFecha}" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Concepto</label>
+          <input type="text" class="form-input" id="contribConcepto" value="${escapeHtml(currentConcepto)}" placeholder="Ej. Uniformes">
+          <div class="concept-chips" id="conceptChipsRow">${conceptChips}</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Notas privadas (opcional)</label>
+          <textarea class="form-textarea" id="contribNotas" placeholder="Notas internas del tesorero...">${escapeHtml(currentNotas)}</textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      ${isEdit ? `<button class="btn btn-danger" onclick="confirmDeleteContribucion('${c.id}')">Eliminar</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="saveContribBtn">Guardar</button>
+    </div>`;
+
+  // Internal state
+  const formState = {
+    origen: currentOrigen,
+    player_id: currentPlayerId,
+    nombre_donante: currentNombre,
+    visibilidad,
+    playersData: players
+  };
+
+  function renderDonanteFields() {
+    const donanteDiv = document.getElementById('donanteFields');
+    if (formState.origen === 'jugador') {
+      donanteDiv.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Jugador</label>
+          <select class="form-select" id="contribPlayerId">
+            <option value="">— Selecciona un jugador —</option>
+            ${formState.playersData.map(p =>
+              `<option value="${p.id}" ${formState.player_id === p.id ? 'selected' : ''}>#${p.numero} — ${escapeHtml(p.apodo || p.nombre)}</option>`
+            ).join('')}
+          </select>
+        </div>`;
+    } else if (formState.origen === 'patrocinador') {
+      donanteDiv.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Nombre del patrocinador</label>
+          <input type="text" class="form-input" id="contribNombreDonante" value="${escapeHtml(formState.nombre_donante)}" placeholder="Ej. Taquería El Chikilín" required>
+          <div class="form-hint">Este nombre aparecerá en la vitrina pública de patrocinadores</div>
+        </div>`;
+    } else {
+      donanteDiv.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Nombre del donante (opcional)</label>
+          <input type="text" class="form-input" id="contribNombreDonante" value="${escapeHtml(formState.nombre_donante)}" placeholder="Ej. Un amigo del equipo">
+        </div>`;
+    }
+  }
+
+  function renderVisibilityFields() {
+    const visDiv = document.getElementById('visibilityFields');
+    const options = formState.origen === 'patrocinador'
+      ? [
+          { v: 'publico', icon: '🏆', title: 'Público con nombre', desc: 'Aparece en la vitrina de patrocinadores del home' },
+          { v: 'privado', icon: '🔒', title: 'Privado', desc: 'Solo el tesorero lo ve en cuentas (no aparece en vitrina)' }
+        ]
+      : [
+          { v: 'publico', icon: '📣', title: 'Con nombre', desc: 'Aparece con el nombre del donante' },
+          { v: 'anonimo', icon: '🤫', title: 'Público anónimo', desc: 'Aparece como "Aportación anónima" — solo tesorero ve el nombre' },
+          { v: 'privado', icon: '🔒', title: 'Privado', desc: 'Solo el tesorero lo ve, no aparece en la app pública' }
+        ];
+
+    visDiv.innerHTML = options.map(o => `
+      <label class="visibility-option ${formState.visibilidad === o.v ? 'active' : ''}">
+        <input type="radio" name="visibility" value="${o.v}" ${formState.visibilidad === o.v ? 'checked' : ''}>
+        <div class="visibility-option-body">
+          <div class="visibility-option-title">${o.icon} ${o.title}</div>
+          <div class="visibility-option-desc">${o.desc}</div>
+        </div>
+      </label>
+    `).join('');
+
+    // Listeners para visibility
+    document.querySelectorAll('input[name="visibility"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        formState.visibilidad = e.target.value;
+        // Actualizar clases active
+        document.querySelectorAll('.visibility-option').forEach(opt => {
+          opt.classList.toggle('active', opt.querySelector('input').checked);
+        });
+      });
+    });
+  }
+
+  // Initial render
+  renderDonanteFields();
+  renderVisibilityFields();
+
+  // Origen selector
+  document.querySelectorAll('.contrib-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      formState.origen = btn.dataset.origen;
+      document.querySelectorAll('.contrib-type-btn').forEach(b => b.classList.toggle('active', b === btn));
+      // Si cambia a patrocinador, forzar visibilidad a "publico" por defecto
+      if (formState.origen === 'patrocinador' && formState.visibilidad === 'anonimo') {
+        formState.visibilidad = 'publico';
+      }
+      renderDonanteFields();
+      renderVisibilityFields();
+    });
+  });
+
+  // Concept chips
+  document.querySelectorAll('.concept-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const concepto = chip.dataset.concept;
+      document.getElementById('contribConcepto').value = concepto === 'General' ? '' : concepto;
+      document.querySelectorAll('.concept-chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+
+  document.getElementById('saveContribBtn').addEventListener('click', () => saveContribucion(formState));
+}
+
+async function saveContribucion(formState) {
+  const errorDiv = document.getElementById('contribFormError');
+  const saveBtn = document.getElementById('saveContribBtn');
+
+  const id = document.getElementById('contribId').value;
+  const monto = parseFloat(document.getElementById('contribMonto').value);
+  const fecha = document.getElementById('contribFecha').value;
+  const concepto = document.getElementById('contribConcepto').value.trim() || null;
+  const notas = document.getElementById('contribNotas').value.trim() || null;
+  const origen = formState.origen;
+  const visibilidad = formState.visibilidad;
+
+  // Validaciones
+  if (isNaN(monto) || monto <= 0) {
+    errorDiv.innerHTML = '<div class="form-error">Ingresa un monto válido</div>';
+    return;
+  }
+  if (!fecha) {
+    errorDiv.innerHTML = '<div class="form-error">Selecciona la fecha</div>';
+    return;
+  }
+
+  let player_id = null;
+  let nombre_donante = null;
+
+  if (origen === 'jugador') {
+    const select = document.getElementById('contribPlayerId');
+    player_id = select?.value || null;
+    if (!player_id) {
+      errorDiv.innerHTML = '<div class="form-error">Selecciona el jugador</div>';
+      return;
+    }
+  } else {
+    const nombreInput = document.getElementById('contribNombreDonante');
+    nombre_donante = nombreInput?.value?.trim() || null;
+    if (origen === 'patrocinador' && !nombre_donante) {
+      errorDiv.innerHTML = '<div class="form-error">Ingresa el nombre del patrocinador</div>';
+      return;
+    }
+  }
+
+  const publico = visibilidad !== 'privado';
+  const anonimo = visibilidad === 'anonimo';
+
+  const payload = {
+    fecha, monto, origen, player_id, nombre_donante,
+    publico, anonimo, concepto, notas
+  };
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+  errorDiv.innerHTML = '';
+
+  try {
+    let result;
+    if (id) result = await db.from('contribuciones').update(payload).eq('id', id);
+    else {
+      payload.created_by = state.user?.id || null;
+      result = await db.from('contribuciones').insert(payload);
+    }
+    if (result.error) throw result.error;
+
+    closeModal();
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Guardar';
+  }
+}
+
+function confirmDeleteContribucion(contribId) {
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>ELIMINAR CONTRIBUCIÓN</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
+        <p style="color: var(--cream-2); line-height: 1.6;">
+          Esta acción <strong style="color: var(--red);">NO se puede deshacer</strong>.
+          <br><br>
+          Se recalcularán automáticamente los saldos y las deudas.
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="showContribucionForm('${contribId}')">Cancelar</button>
+      <button class="btn btn-danger" onclick="deleteContribucion('${contribId}')">Sí, eliminar</button>
+    </div>`;
+}
+
+async function deleteContribucion(contribId) {
+  try {
+    const { error } = await db.from('contribuciones').delete().eq('id', contribId);
+    if (error) throw error;
+    closeModal();
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// ============================================================
 // NAVEGACIÓN
 // ============================================================
 const screens = document.querySelectorAll('.screen');
@@ -1862,6 +2323,7 @@ navItems.forEach(btn => {
 document.getElementById('fabAdd').addEventListener('click', () => {
   if (state.currentScreen === 'roster') showPlayerForm();
   else if (state.currentScreen === 'calendario') showGameForm();
+  else if (state.currentScreen === 'tesoreria') showContribucionForm();
 });
 
 // Exponer funciones globales (para onclick)
@@ -1885,6 +2347,9 @@ window.togglePagado = togglePagado;
 window.bulkAttendanceAction = bulkAttendanceAction;
 window.saveAttendance = saveAttendance;
 window.confirmCloseAttendance = confirmCloseAttendance;
+window.showContribucionForm = showContribucionForm;
+window.confirmDeleteContribucion = confirmDeleteContribucion;
+window.deleteContribucion = deleteContribucion;
 
 // INICIO
 (async () => {

@@ -1123,14 +1123,15 @@ async function showGameDetail(gameId) {
     <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
 
   try {
-    const [gameRes, attRes, expRes] = await Promise.all([
+    const [gameRes, attRes, expRes, photosRes] = await Promise.all([
       db.from('games').select('*').eq('id', gameId).maybeSingle(),
       db.from('attendance').select('estado, aportacion, pagado').eq('game_id', gameId),
-      db.from('expenses').select('*').eq('game_id', gameId).order('fecha', { ascending: false })
+      db.from('expenses').select('*').eq('game_id', gameId).order('fecha', { ascending: false }),
+      db.from('photos').select('*').eq('game_id', gameId).order('created_at', { ascending: false })
     ]);
     if (gameRes.error) throw gameRes.error;
     if (!gameRes.data) throw new Error('Juego no encontrado');
-    renderGameDetail(gameRes.data, attRes.data || [], expRes.data || []);
+    renderGameDetail(gameRes.data, attRes.data || [], expRes.data || [], photosRes.data || []);
   } catch (err) {
     modalContent.innerHTML = `
       <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
@@ -1138,7 +1139,7 @@ async function showGameDetail(gameId) {
   }
 }
 
-function renderGameDetail(g, attendanceRecords, expensesRecords) {
+function renderGameDetail(g, attendanceRecords, expensesRecords, photosRecords) {
   // Fecha grande
   const dateHeader = `
     <div class="game-detail-header">
@@ -1307,6 +1308,42 @@ function renderGameDetail(g, attendanceRecords, expensesRecords) {
       </button>`;
   }
 
+  // Sección de fotos del juego
+  let photosSection = '';
+  const photos = photosRecords || [];
+  if (photos.length > 0) {
+    const previews = photos.slice(0, 6);
+    const extra = photos.length - previews.length;
+    let thumbsHtml = '';
+    previews.forEach((p, idx) => {
+      const isLast = idx === previews.length - 1 && extra > 0;
+      const overlayClass = isLast ? 'more-overlay' : '';
+      const overlayData = isLast ? `data-more="+${extra}"` : '';
+      thumbsHtml += `
+        <div class="photo-thumb ${overlayClass}"
+             ${overlayData}
+             style="background-image: url('${photoThumb(p.cloudinary_url)}');"
+             onclick="openGameLightbox('${g.id}', ${idx})"></div>`;
+    });
+    photosSection = `
+      <div class="photo-section">
+        <div class="photo-section-head">
+          <div class="photo-section-title">📸 MEMORIAS DEL JUEGO</div>
+          <div class="photo-section-count">${photos.length} foto${photos.length !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="photo-grid">${thumbsHtml}</div>
+        ${state.isTesorero ? `
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px; padding: 8px;" onclick="showPhotoUploadForm('${g.id}')">
+            📷 Agregar más fotos
+          </button>` : ''}
+      </div>`;
+  } else if (state.isTesorero) {
+    photosSection = `
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="showPhotoUploadForm('${g.id}')">
+        📸 Agregar fotos del juego
+      </button>`;
+  }
+
   // Footer
   let footerButtons = '';
   if (state.isTesorero) {
@@ -1329,6 +1366,7 @@ function renderGameDetail(g, attendanceRecords, expensesRecords) {
       ${attendanceMini}
       ${attendanceButton}
       ${expensesSection}
+      ${photosSection}
       ${infoRows}
     </div>
     ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
@@ -2746,6 +2784,511 @@ async function deleteExpense(expenseId) {
 }
 
 // ============================================================
+// GALERÍA DE FOTOS
+// ============================================================
+
+// Helper para optimizar URLs de Cloudinary
+function cloudinaryTransform(url, transform) {
+  if (!url || !url.includes('/upload/')) return url;
+  return url.replace('/upload/', `/upload/${transform}/`);
+}
+function photoThumb(url) {
+  return cloudinaryTransform(url, 'c_fill,g_auto,w_400,h_400,q_auto,f_auto');
+}
+function photoFull(url) {
+  return cloudinaryTransform(url, 'q_auto:best,f_auto,w_1600');
+}
+
+// ----------------- PANTALLA: GALERÍA -----------------
+async function loadGaleria() {
+  const container = document.getElementById('galeria-content');
+  try {
+    // Traer fotos con info del juego (via join manual con 2 queries)
+    const { data: photos, error: photosErr } = await db
+      .from('photos')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (photosErr) throw photosErr;
+
+    if (!photos || photos.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="emoji">📸</div>
+          <p>Todavía no hay fotos.</p>
+          <div class="chk">¡Ya parió la cochi!</div>
+          ${state.isTesorero ? '<p style="font-size: 11px; color: var(--text-muted); margin-top: 12px;">Entra al detalle de un juego para agregar las primeras memorias.</p>' : ''}
+        </div>`;
+      return;
+    }
+
+    // Agrupar por game_id
+    const photosByGame = {};
+    for (const p of photos) {
+      if (!photosByGame[p.game_id]) photosByGame[p.game_id] = [];
+      photosByGame[p.game_id].push(p);
+    }
+
+    // Traer los juegos involucrados
+    const gameIds = Object.keys(photosByGame);
+    const { data: games } = await db.from('games').select('*').in('id', gameIds);
+    const gamesMap = {};
+    for (const g of games || []) gamesMap[g.id] = g;
+
+    // Ordenar juegos por la foto más reciente que tienen
+    const gameIdsSorted = gameIds.sort((a, b) => {
+      const latestA = photosByGame[a][0]?.created_at || '';
+      const latestB = photosByGame[b][0]?.created_at || '';
+      return latestB.localeCompare(latestA);
+    });
+
+    let html = `
+      <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 14px; text-align: center; letter-spacing: 1px;">
+        ${photos.length} FOTO${photos.length !== 1 ? 'S' : ''} · ${gameIdsSorted.length} JUEGO${gameIdsSorted.length !== 1 ? 'S' : ''}
+      </div>`;
+
+    for (const gid of gameIdsSorted) {
+      const game = gamesMap[gid];
+      if (!game) continue;
+      const gamePhotos = photosByGame[gid];
+      const d = formatDateShort(game.fecha);
+      const previews = gamePhotos.slice(0, 6);
+      const extra = gamePhotos.length - previews.length;
+
+      let resultPill = '';
+      if (game.resultado === 'W') resultPill = `<div class="photo-game-result w">G ${game.carreras_tazos || 0}-${game.carreras_rival || 0}</div>`;
+      else if (game.resultado === 'L') resultPill = `<div class="photo-game-result l">P ${game.carreras_tazos || 0}-${game.carreras_rival || 0}</div>`;
+      else if (game.resultado === 'T') resultPill = `<div class="photo-game-result t">E ${game.carreras_tazos || 0}-${game.carreras_rival || 0}</div>`;
+
+      let previewHtml = '<div class="photo-grid">';
+      previews.forEach((p, idx) => {
+        const isLast = idx === previews.length - 1 && extra > 0;
+        const overlayClass = isLast ? 'more-overlay' : '';
+        const overlayData = isLast ? `data-more="+${extra}"` : '';
+        previewHtml += `
+          <div class="photo-thumb ${overlayClass}"
+               ${overlayData}
+               style="background-image: url('${photoThumb(p.cloudinary_url)}');"
+               onclick="openGameLightbox('${gid}', ${idx})"></div>`;
+      });
+      previewHtml += '</div>';
+
+      html += `
+        <div class="photo-game-card">
+          <div class="photo-game-head">
+            <div>
+              <div class="photo-game-title">vs ${escapeHtml(game.rival || 'Rival')}</div>
+              <div class="photo-game-date">${d.day} ${d.month} · ${gamePhotos.length} foto${gamePhotos.length !== 1 ? 's' : ''}</div>
+            </div>
+            ${resultPill}
+          </div>
+          ${previewHtml}
+        </div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = errorBox('No se pudo cargar la galería.', err.message);
+  }
+}
+
+// Cache de fotos por juego para el lightbox
+const photosCacheByGame = {};
+
+async function openGameLightbox(gameId, startIndex) {
+  try {
+    let photos = photosCacheByGame[gameId];
+    if (!photos) {
+      const { data, error } = await db
+        .from('photos')
+        .select('*')
+        .eq('game_id', gameId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      photos = data || [];
+      photosCacheByGame[gameId] = photos;
+    }
+    if (photos.length === 0) return;
+    showLightbox(photos, startIndex || 0, gameId);
+  } catch (err) {
+    alert('Error al abrir galería: ' + err.message);
+  }
+}
+
+// ----------------- LIGHTBOX -----------------
+const lightboxState = { photos: [], index: 0, gameId: null };
+
+function showLightbox(photos, startIndex, gameId) {
+  lightboxState.photos = photos;
+  lightboxState.index = startIndex;
+  lightboxState.gameId = gameId;
+
+  document.body.classList.add('lightbox-open');
+  document.getElementById('lightboxOverlay').classList.add('show');
+  document.getElementById('lightboxDelete').style.display = state.isTesorero ? 'grid' : 'none';
+
+  renderLightboxPhoto();
+}
+
+function renderLightboxPhoto() {
+  const { photos, index } = lightboxState;
+  if (photos.length === 0) { closeLightbox(); return; }
+  const photo = photos[index];
+
+  const img = document.getElementById('lightboxImg');
+  img.src = photoFull(photo.cloudinary_url);
+  img.alt = `Foto ${index + 1}`;
+
+  document.getElementById('lightboxCounter').textContent = `${index + 1} / ${photos.length}`;
+
+  const prev = document.getElementById('lightboxPrev');
+  const next = document.getElementById('lightboxNext');
+  prev.disabled = index === 0;
+  next.disabled = index === photos.length - 1;
+
+  const footer = document.getElementById('lightboxFooter');
+  if (photo.created_at) {
+    const d = new Date(photo.created_at);
+    footer.textContent = d.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' });
+  } else {
+    footer.textContent = '';
+  }
+
+  // Precargar siguiente para UX fluida
+  if (index + 1 < photos.length) {
+    const nextImg = new Image();
+    nextImg.src = photoFull(photos[index + 1].cloudinary_url);
+  }
+}
+
+function closeLightbox() {
+  document.body.classList.remove('lightbox-open');
+  document.getElementById('lightboxOverlay').classList.remove('show');
+}
+
+function lightboxNext() {
+  if (lightboxState.index < lightboxState.photos.length - 1) {
+    lightboxState.index++;
+    renderLightboxPhoto();
+  }
+}
+
+function lightboxPrev() {
+  if (lightboxState.index > 0) {
+    lightboxState.index--;
+    renderLightboxPhoto();
+  }
+}
+
+async function lightboxShare() {
+  const photo = lightboxState.photos[lightboxState.index];
+  if (!photo) return;
+
+  const shareUrl = photoFull(photo.cloudinary_url);
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Tazos Dorados',
+        text: 'Memorias del corazón, coqueto 💛',
+        url: shareUrl
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') console.error(err);
+    }
+  } else {
+    // Fallback: copiar URL al clipboard
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      alert('Link de la foto copiado al portapapeles 📋');
+    } catch (err) {
+      prompt('Copia esta URL:', shareUrl);
+    }
+  }
+}
+
+async function lightboxDelete() {
+  if (!state.isTesorero) return;
+  const photo = lightboxState.photos[lightboxState.index];
+  if (!photo) return;
+
+  if (!confirm('¿Eliminar esta foto? No se puede deshacer.')) return;
+
+  try {
+    const { error } = await db.from('photos').delete().eq('id', photo.id);
+    if (error) throw error;
+
+    // Remover del state local
+    lightboxState.photos.splice(lightboxState.index, 1);
+    if (lightboxState.photos.length === 0) {
+      closeLightbox();
+    } else {
+      // Ajustar index si se salió del rango
+      if (lightboxState.index >= lightboxState.photos.length) {
+        lightboxState.index = lightboxState.photos.length - 1;
+      }
+      renderLightboxPhoto();
+    }
+
+    // Invalidar cache y reload
+    if (lightboxState.gameId) delete photosCacheByGame[lightboxState.gameId];
+    loaded.galeria = false;
+    if (state.currentScreen === 'galeria') await loadGaleria();
+  } catch (err) {
+    alert('Error al eliminar: ' + err.message);
+  }
+}
+
+// Touch/swipe para el lightbox
+let lightboxTouchStartX = null;
+function lightboxTouchStart(e) { lightboxTouchStartX = e.touches[0].clientX; }
+function lightboxTouchEnd(e) {
+  if (lightboxTouchStartX === null) return;
+  const endX = e.changedTouches[0].clientX;
+  const dx = endX - lightboxTouchStartX;
+  if (Math.abs(dx) > 50) {
+    if (dx < 0) lightboxNext();
+    else lightboxPrev();
+  }
+  lightboxTouchStartX = null;
+}
+
+// Listeners del lightbox (se enganchan al inicio)
+function initLightbox() {
+  document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+  document.getElementById('lightboxPrev').addEventListener('click', lightboxPrev);
+  document.getElementById('lightboxNext').addEventListener('click', lightboxNext);
+  document.getElementById('lightboxShare').addEventListener('click', lightboxShare);
+  document.getElementById('lightboxDelete').addEventListener('click', lightboxDelete);
+
+  const lbBody = document.querySelector('.lightbox-body');
+  lbBody.addEventListener('touchstart', lightboxTouchStart, { passive: true });
+  lbBody.addEventListener('touchend', lightboxTouchEnd, { passive: true });
+
+  document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('lightboxOverlay').classList.contains('show')) return;
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowLeft') lightboxPrev();
+    else if (e.key === 'ArrowRight') lightboxNext();
+  });
+}
+
+// ----------------- UPLOAD DE FOTOS -----------------
+let photoUploadState = { gameId: null, files: [] };
+
+async function showPhotoUploadForm(gameId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>CARGANDO...</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    const { data: g, error } = await db.from('games').select('id, fecha, rival').eq('id', gameId).maybeSingle();
+    if (error) throw error;
+    if (!g) throw new Error('Juego no encontrado');
+
+    photoUploadState = { gameId, files: [], game: g };
+    renderPhotoUploadForm();
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderPhotoUploadForm() {
+  const { game, files } = photoUploadState;
+  const d = formatDateShort(game.fecha);
+
+  let previewHtml = '';
+  if (files.length > 0) {
+    previewHtml = `
+      <div class="photo-section-head">
+        <div class="photo-section-title">📎 ${files.length} foto${files.length !== 1 ? 's' : ''} seleccionada${files.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="upload-preview-grid">
+        ${files.map((f, i) => `
+          <div class="upload-preview-item" style="background-image: url('${f.previewUrl}');">
+            <button class="upload-preview-remove" onclick="removePhotoFromQueue(${i})">×</button>
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>AGREGAR FOTOS</h2>
+      <button class="modal-close" onclick="closePhotoUploadForm()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; margin-bottom: 14px; color: var(--cream-2);">
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 2px; color: var(--gold);">vs ${escapeHtml(game.rival || 'Rival')}</div>
+        <div style="font-size: 12px; margin-top: 2px;">${d.day} ${d.month}</div>
+      </div>
+
+      <div id="uploadError"></div>
+
+      <div class="upload-zone" onclick="document.getElementById('photoInput').click();">
+        <div class="upload-zone-icon">📸</div>
+        <div class="upload-zone-title">TOCA PARA SELECCIONAR FOTOS</div>
+        <div class="upload-zone-sub">Puedes elegir varias a la vez · JPG, PNG, WEBP, HEIC</div>
+      </div>
+      <input type="file" id="photoInput" accept="image/*" multiple style="display:none;">
+
+      <div id="previewArea">${previewHtml}</div>
+
+      <div id="uploadProgressArea"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closePhotoUploadForm()">Cancelar</button>
+      <button class="btn btn-primary" id="startUploadBtn" onclick="startPhotoUpload()" ${files.length === 0 ? 'disabled' : ''}>
+        ${files.length > 0 ? `Subir ${files.length} foto${files.length !== 1 ? 's' : ''}` : 'Selecciona fotos'}
+      </button>
+    </div>`;
+
+  document.getElementById('photoInput').addEventListener('change', handlePhotoSelection);
+}
+
+function handlePhotoSelection(e) {
+  const files = Array.from(e.target.files || []);
+  const errorDiv = document.getElementById('uploadError');
+  errorDiv.innerHTML = '';
+
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+  const maxSize = 10 * 1024 * 1024; // 10 MB
+
+  const accepted = [];
+  const rejected = [];
+  for (const f of files) {
+    const isImg = allowed.includes(f.type) || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(f.name);
+    if (!isImg) { rejected.push(`${f.name}: formato no soportado`); continue; }
+    if (f.size > maxSize) { rejected.push(`${f.name}: pasa los 10 MB`); continue; }
+    accepted.push({ file: f, previewUrl: URL.createObjectURL(f), name: f.name });
+  }
+
+  if (rejected.length > 0) {
+    errorDiv.innerHTML = `<div class="form-error">${rejected.join('<br>')}</div>`;
+  }
+
+  photoUploadState.files = [...photoUploadState.files, ...accepted];
+  renderPhotoUploadForm();
+}
+
+function removePhotoFromQueue(index) {
+  const file = photoUploadState.files[index];
+  if (file?.previewUrl) URL.revokeObjectURL(file.previewUrl);
+  photoUploadState.files.splice(index, 1);
+  renderPhotoUploadForm();
+}
+
+function closePhotoUploadForm() {
+  // Liberar URLs de preview
+  for (const f of photoUploadState.files) {
+    if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+  }
+  photoUploadState = { gameId: null, files: [] };
+  closeModal();
+}
+
+async function startPhotoUpload() {
+  const { gameId, files } = photoUploadState;
+  if (files.length === 0) return;
+
+  const btn = document.getElementById('startUploadBtn');
+  btn.disabled = true;
+
+  const progressArea = document.getElementById('uploadProgressArea');
+  const uploadZone = document.querySelector('.upload-zone');
+  if (uploadZone) uploadZone.style.display = 'none';
+
+  progressArea.innerHTML = `
+    <div class="upload-progress">
+      <div class="upload-progress-label" id="uploadLabel">SUBIENDO...</div>
+      <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadFill" style="width: 0%;"></div></div>
+      <div class="upload-progress-count" id="uploadCount">0 / ${files.length}</div>
+    </div>`;
+
+  let uploaded = 0;
+  let errors = [];
+
+  for (let i = 0; i < files.length; i++) {
+    document.getElementById('uploadLabel').textContent = `SUBIENDO ${i + 1} DE ${files.length}...`;
+    try {
+      await uploadSinglePhoto(files[i].file, gameId);
+      uploaded++;
+    } catch (err) {
+      console.error(err);
+      errors.push(`${files[i].name}: ${err.message}`);
+    }
+    const pct = Math.round(((i + 1) / files.length) * 100);
+    document.getElementById('uploadFill').style.width = `${pct}%`;
+    document.getElementById('uploadCount').textContent = `${i + 1} / ${files.length}`;
+  }
+
+  // Limpiar URLs de preview
+  for (const f of files) {
+    if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+  }
+
+  if (errors.length > 0) {
+    document.getElementById('uploadError').innerHTML = `<div class="form-error">Subidas: ${uploaded} · Fallidas: ${errors.length}<br>${errors.slice(0, 3).join('<br>')}</div>`;
+    btn.disabled = false;
+    btn.textContent = 'Cerrar';
+    btn.onclick = () => closePhotoUploadForm();
+  } else {
+    // Limpio, cerrar y refrescar
+    photoUploadState = { gameId: null, files: [] };
+    closeModal();
+  }
+
+  // Invalidar caches y refrescar
+  delete photosCacheByGame[gameId];
+  loaded.galeria = false;
+  if (state.currentScreen === 'galeria') await loadGaleria();
+
+  // Si el usuario está viendo el detalle del juego, refrescar
+  if (modalBackdrop.classList.contains('show')) {
+    setTimeout(() => showGameDetail(gameId), 100);
+  }
+}
+
+async function uploadSinglePhoto(file, gameId) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', window.APP_CONFIG.cloudinaryUploadPreset);
+  formData.append('folder', `tazos-dorados/games/${gameId}`);
+
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${window.APP_CONFIG.cloudinaryCloudName}/image/upload`,
+    { method: 'POST', body: formData }
+  );
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  // Guardar en Supabase
+  const payload = {
+    game_id: gameId,
+    cloudinary_public_id: data.public_id,
+    cloudinary_url: data.secure_url,
+    created_by: state.user?.id || null
+  };
+
+  const { error } = await db.from('photos').insert(payload);
+  if (error) throw error;
+
+  return data;
+}
+
+// ============================================================
 // NAVEGACIÓN
 // ============================================================
 const screens = document.querySelectorAll('.screen');
@@ -2756,10 +3299,10 @@ const loaders = {
   tesoreria: loadTesoreria,
   roster: loadRoster,
   calendario: loadCalendario,
-  galeria: () => {}
+  galeria: loadGaleria
 };
 
-const loaded = { home: false, tesoreria: false, roster: false, calendario: false };
+const loaded = { home: false, tesoreria: false, roster: false, calendario: false, galeria: false };
 
 function showScreen(target) {
   screens.forEach(s => s.classList.toggle('active', s.id === target));
@@ -2826,9 +3369,15 @@ window.showExpenseDetail = showExpenseDetail;
 window.showExpenseForm = showExpenseForm;
 window.confirmDeleteExpense = confirmDeleteExpense;
 window.deleteExpense = deleteExpense;
+window.showPhotoUploadForm = showPhotoUploadForm;
+window.closePhotoUploadForm = closePhotoUploadForm;
+window.removePhotoFromQueue = removePhotoFromQueue;
+window.startPhotoUpload = startPhotoUpload;
+window.openGameLightbox = openGameLightbox;
 
 // INICIO
 (async () => {
+  initLightbox();
   await checkAuthStatus();
   document.body.classList.add('screen-home');
   loadHome();

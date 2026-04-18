@@ -1,6 +1,10 @@
 /* ============================================================
-   TAZOS DORADOS · app.js
-   Login + Roster editable + Upload a Cloudinary
+   TAZOS DORADOS · app.js v2.1
+   FIXES:
+   - FAB solo visible en pantalla Roster (cuando es tesorero)
+   - showPlayerForm ahora abre el modal (antes no lo abría)
+   - Jugadores desactivados visibles al final del roster con etiqueta
+   - Posibilidad de reactivar jugador desde su detalle
    ============================================================ */
 
 const { createClient } = window.supabase;
@@ -413,11 +417,35 @@ async function loadTesoreria() {
   }
 }
 
-// PANTALLA: ROSTER
+// =================================================================
+// PANTALLA: ROSTER (ahora muestra activos + desactivados al final)
+// =================================================================
+function renderPlayerCard(p) {
+  const posiciones = Array.isArray(p.posicion) && p.posicion.length > 0 ? p.posicion.join(' / ') : 'UTILITY';
+  const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
+  const avatarText = p.foto_url ? '' : getInitials(p.nombre);
+  const inactiveClass = p.activo ? '' : 'inactive';
+  const inactiveBadge = p.activo ? '' : `<span class="inactive-badge">INACTIVO</span>`;
+  return `
+    <div class="player-card ${inactiveClass}" onclick="showPlayerDetail('${p.id}')">
+      ${inactiveBadge}
+      <div class="player-card-avatar" ${avatarStyle}>${avatarText}</div>
+      <div class="player-number">#${String(p.numero).padStart(2, '0')}</div>
+      <div class="player-card-name">${escapeHtml(p.apodo || p.nombre)}</div>
+      <div class="player-pos">${escapeHtml(posiciones)}</div>
+    </div>`;
+}
+
 async function loadRoster() {
   const container = document.getElementById('roster-content');
   try {
-    const { data, error } = await db.from('players').select('*').eq('activo', true).order('numero', { ascending: true });
+    // Traer TODOS los jugadores, activos e inactivos
+    const { data, error } = await db
+      .from('players')
+      .select('*')
+      .order('activo', { ascending: false })
+      .order('numero', { ascending: true });
+
     if (error) throw error;
 
     if (!data || data.length === 0) {
@@ -430,25 +458,37 @@ async function loadRoster() {
       return;
     }
 
+    // Separar activos e inactivos
+    const activos = data.filter(p => p.activo);
+    const inactivos = data.filter(p => !p.activo);
+
+    // Si NO es tesorero, solo mostrar activos
+    const mostrarInactivos = state.isTesorero && inactivos.length > 0;
+
     let html = `
       <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 12px; text-align: center; letter-spacing: 1px;">
-        ${data.length} TAZOS DORADOS
+        ${activos.length} TAZOS DORADOS ACTIVOS
       </div>
       <div class="roster-grid">`;
 
-    for (const p of data) {
-      const posiciones = Array.isArray(p.posicion) && p.posicion.length > 0 ? p.posicion.join(' / ') : 'UTILITY';
-      const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
-      const avatarText = p.foto_url ? '' : getInitials(p.nombre);
-      html += `
-        <div class="player-card" onclick="showPlayerDetail('${p.id}')">
-          <div class="player-card-avatar" ${avatarStyle}>${avatarText}</div>
-          <div class="player-number">#${String(p.numero).padStart(2, '0')}</div>
-          <div class="player-card-name">${escapeHtml(p.apodo || p.nombre)}</div>
-          <div class="player-pos">${escapeHtml(posiciones)}</div>
-        </div>`;
+    for (const p of activos) {
+      html += renderPlayerCard(p);
     }
     html += `</div>`;
+
+    // Sección de inactivos (solo tesorero)
+    if (mostrarInactivos) {
+      html += `
+        <div class="inactive-subgrid-label">
+          ─── DESACTIVADOS (${inactivos.length}) ───
+        </div>
+        <div class="roster-grid">`;
+      for (const p of inactivos) {
+        html += renderPlayerCard(p);
+      }
+      html += `</div>`;
+    }
+
     container.innerHTML = html;
   } catch (err) {
     console.error(err);
@@ -456,7 +496,9 @@ async function loadRoster() {
   }
 }
 
+// =================================================================
 // DETALLE DE JUGADOR
+// =================================================================
 async function showPlayerDetail(playerId) {
   openModal(`
     <div class="modal-header">
@@ -484,7 +526,23 @@ function renderPlayerDetail(p) {
   const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
   const avatarText = p.foto_url ? '' : getInitials(p.nombre);
 
-  const editButton = state.isTesorero ? `<button class="btn btn-primary" onclick="showPlayerForm('${p.id}')">✏️ Editar</button>` : '';
+  // Banner si está desactivado
+  const inactiveBanner = !p.activo
+    ? `<div class="inactive-banner">⚠ JUGADOR DESACTIVADO</div>`
+    : '';
+
+  // Construir footer según estado y permisos
+  let footerButtons = '';
+  if (state.isTesorero) {
+    if (p.activo) {
+      footerButtons = `<button class="btn btn-primary" onclick="showPlayerForm('${p.id}')">✏️ Editar</button>`;
+    } else {
+      footerButtons = `
+        <button class="btn btn-secondary" onclick="showPlayerForm('${p.id}')">✏️ Editar</button>
+        <button class="btn btn-success" onclick="reactivatePlayer('${p.id}')">↻ Reactivar</button>
+      `;
+    }
+  }
 
   modalContent.innerHTML = `
     <div class="modal-header">
@@ -492,6 +550,7 @@ function renderPlayerDetail(p) {
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
+      ${inactiveBanner}
       <div class="player-detail-avatar" ${avatarStyle}>${avatarText}</div>
       <div class="player-detail-number">#${String(p.numero).padStart(2, '0')}</div>
       <div class="player-detail-name">${escapeHtml(p.nombre)}</div>
@@ -521,19 +580,36 @@ function renderPlayerDetail(p) {
         </div>` : ''}
       </div>
     </div>
-    ${editButton ? `<div class="modal-footer">${editButton}</div>` : ''}`;
+    ${footerButtons ? `<div class="modal-footer">${footerButtons}</div>` : ''}`;
 }
 
-// FORMULARIO JUGADOR
+// =================================================================
+// FORMULARIO JUGADOR (fix: ahora abre el modal!)
+// =================================================================
 async function showPlayerForm(playerId) {
   if (!state.isTesorero) {
     showLoginModal();
     return;
   }
 
+  // 🔧 FIX: Abrir el modal primero con un loading, luego renderizar el form
+  openModal(`
+    <div class="modal-header">
+      <h2>${playerId ? 'EDITANDO...' : 'NUEVO JUGADOR'}</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+
   let player = null;
   if (playerId) {
-    const { data } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
+    const { data, error } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
+    if (error) {
+      modalContent.innerHTML = `
+        <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${errorBox('No se pudo cargar el jugador.', error.message)}</div>`;
+      return;
+    }
     player = data;
   }
   renderPlayerForm(player);
@@ -586,7 +662,7 @@ function renderPlayerForm(p) {
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Número</label>
-            <input type="number" class="form-input" id="numero" value="${p?.numero || ''}" required min="0" max="999">
+            <input type="number" class="form-input" id="numero" value="${p?.numero ?? ''}" required min="0" max="999">
           </div>
           <div class="form-group" style="flex: 2;">
             <label class="form-label">Nombre completo</label>
@@ -626,7 +702,7 @@ function renderPlayerForm(p) {
       </form>
     </div>
     <div class="modal-footer">
-      ${isEdit ? `<button class="btn btn-danger" onclick="confirmDeactivate('${p.id}')">Desactivar</button>` : ''}
+      ${isEdit && p.activo ? `<button class="btn btn-danger" onclick="confirmDeactivate('${p.id}')">Desactivar</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" id="saveBtn">Guardar</button>
     </div>`;
@@ -720,9 +796,10 @@ async function savePlayer() {
     posicion: posicion.length > 0 ? posicion : null,
     mano, bateo, telefono,
     fecha_nacimiento: fechaNacimiento,
-    foto_url: fotoUrl,
-    activo: true
+    foto_url: fotoUrl
   };
+  // Solo en nuevos, forzamos activo: true
+  if (!id) payload.activo = true;
 
   try {
     let result;
@@ -751,9 +828,10 @@ function confirmDeactivate(playerId) {
       <div style="text-align: center; padding: 20px 0;">
         <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
         <p style="color: var(--cream-2); line-height: 1.6;">
-          Dejará de aparecer en el roster, pero sus registros se mantienen.
+          Aparecerá al final del roster con la etiqueta <strong style="color: var(--red);">INACTIVO</strong>.
+          <br>Sus registros se mantienen.
           <br><br>
-          <strong style="color: var(--gold);">Puedes reactivarlo después.</strong>
+          <strong style="color: var(--gold);">Puedes reactivarlo cuando quieras.</strong>
         </p>
       </div>
     </div>
@@ -766,6 +844,18 @@ function confirmDeactivate(playerId) {
 async function deactivatePlayer(playerId) {
   try {
     const { error } = await db.from('players').update({ activo: false }).eq('id', playerId);
+    if (error) throw error;
+    closeModal();
+    await loadRoster();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// 🔧 NUEVA: Reactivar jugador
+async function reactivatePlayer(playerId) {
+  try {
+    const { error } = await db.from('players').update({ activo: true }).eq('id', playerId);
     if (error) throw error;
     closeModal();
     await loadRoster();
@@ -837,7 +927,9 @@ async function loadCalendario() {
   }
 }
 
-// NAVEGACIÓN
+// =================================================================
+// NAVEGACIÓN (fix: ahora agrega clase screen-{name} al body para el FAB)
+// =================================================================
 const screens = document.querySelectorAll('.screen');
 const navItems = document.querySelectorAll('.nav-item');
 
@@ -856,6 +948,10 @@ function showScreen(target) {
   navItems.forEach(n => n.classList.toggle('active', n.dataset.screen === target));
   window.scrollTo({ top: 0, behavior: 'smooth' });
   state.currentScreen = target;
+
+  // 🔧 FIX: Actualizar clase del body para controlar visibilidad del FAB
+  document.body.classList.remove('screen-home', 'screen-tesoreria', 'screen-roster', 'screen-calendario', 'screen-galeria');
+  document.body.classList.add(`screen-${target}`);
 
   if (!loaded[target] && loaders[target]) {
     loaders[target]();
@@ -876,12 +972,7 @@ navItems.forEach(btn => {
 });
 
 document.getElementById('fabAddPlayer').addEventListener('click', () => {
-  if (state.currentScreen === 'roster') {
-    showPlayerForm();
-  } else {
-    showScreen('roster');
-    setTimeout(() => showPlayerForm(), 300);
-  }
+  showPlayerForm();
 });
 
 // Exponer funciones globales (para onclick)
@@ -891,10 +982,12 @@ window.closeModal = closeModal;
 window.handleLogout = handleLogout;
 window.confirmDeactivate = confirmDeactivate;
 window.deactivatePlayer = deactivatePlayer;
+window.reactivatePlayer = reactivatePlayer;
 
 // INICIO
 (async () => {
   await checkAuthStatus();
+  document.body.classList.add('screen-home'); // Inicia en home
   loadHome();
   loaded.home = true;
 })();

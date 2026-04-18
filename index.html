@@ -25,6 +25,7 @@
     --cream: #f5ede0; --cream-2: #ebe0cc;
     --gold: #e5b94a; --gold-dark: #b8922f; --gold-deep: #8a6a1f;
     --red: #c84242; --red-dark: #8a2e2e; --green: #6ba96b; --green-dark: #4a8a4a;
+    --orange: #d48f3a;
     --text-muted: #8a9aaa;
     --line: rgba(229, 185, 74, 0.12); --line-soft: rgba(245, 237, 224, 0.08);
   }
@@ -49,6 +50,10 @@
   .section-title::before { content: ''; width: 6px; height: 6px; background: var(--gold); border-radius: 50%; box-shadow: 0 0 8px var(--gold); }
   .section-title.muted { color: var(--text-muted); margin-top: 24px; }
   .section-title.muted::before { background: var(--text-muted); box-shadow: none; }
+  .section-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .section-title-row .section-title { margin-bottom: 0; }
+  .section-link { font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--gold); background: transparent; border: 1px solid var(--gold-deep); padding: 4px 10px; border-radius: 20px; cursor: pointer; text-transform: uppercase; }
+  .section-link:active { transform: scale(0.97); }
   .greeting-bar { background: linear-gradient(90deg, rgba(229, 185, 74, 0.12) 0%, rgba(229, 185, 74, 0.03) 100%); border-left: 3px solid var(--gold); padding: 12px 14px; border-radius: 0 10px 10px 0; margin-bottom: 20px; display: flex; gap: 10px; align-items: flex-start; }
   .greeting-bar .q-mark { font-family: 'Caveat', cursive; font-size: 32px; color: var(--gold); line-height: 0.8; opacity: 0.8; }
   .greeting-bar-text { flex: 1; font-family: 'Caveat', cursive; font-size: 18px; color: var(--cream); line-height: 1.25; font-weight: 500; }
@@ -78,14 +83,21 @@
   .identity-motto { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 4px; color: var(--gold); line-height: 1; margin-bottom: 6px; }
   .identity-sub { font-family: 'Caveat', cursive; font-size: 17px; color: var(--cream-2); line-height: 1.3; }
   .list-card { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 14px; overflow: hidden; margin-bottom: 20px; }
-  .list-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line-soft); }
+  .list-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line-soft); cursor: pointer; transition: background 0.15s; }
   .list-row:last-child { border-bottom: none; }
+  .list-row:active { background: var(--navy-3); }
   .list-row-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 14px; flex-shrink: 0; font-weight: bold; }
   .list-row-icon.in { background: rgba(107, 169, 107, 0.15); color: var(--green); }
   .list-row-icon.out { background: rgba(200, 66, 66, 0.15); color: var(--red); }
+  .list-row-icon.cat-campo { background: rgba(107, 169, 107, 0.15); }
+  .list-row-icon.cat-pelotas { background: rgba(229, 185, 74, 0.15); }
+  .list-row-icon.cat-liga { background: rgba(212, 143, 58, 0.15); }
+  .list-row-icon.cat-uniformes { background: rgba(138, 154, 200, 0.15); }
+  .list-row-icon.cat-otros { background: rgba(138, 154, 170, 0.15); }
   .list-row-body { flex: 1; min-width: 0; }
   .list-row-title { font-size: 14px; color: var(--cream); font-weight: 500; }
   .list-row-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .list-row-sub .linked-game { color: var(--gold); }
   .list-row-value { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px; }
   .list-row-value.pos { color: var(--green); }
   .list-row-value.neg { color: var(--red); }
@@ -131,9 +143,10 @@
   .player-card .inactive-badge { position: absolute; top: 6px; right: 6px; background: var(--red-dark); color: var(--cream); font-family: 'Bebas Neue', sans-serif; font-size: 9px; letter-spacing: 1.5px; padding: 3px 7px; border-radius: 4px; z-index: 1; }
   .fab { position: fixed; bottom: 100px; right: 20px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%); color: var(--navy); border: none; font-size: 28px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 20px rgba(229, 185, 74, 0.5); z-index: 55; display: none; align-items: center; justify-content: center; }
   @media (min-width: 430px) { .fab { right: calc(50% - 215px + 20px); } }
-  /* FAB visible en pantallas Roster y Calendario (solo modo tesorero) */
+  /* FAB en 3 pantallas: Roster, Juegos, Cuentas */
   body.tesorero-mode.screen-roster .fab,
-  body.tesorero-mode.screen-calendario .fab { display: flex; }
+  body.tesorero-mode.screen-calendario .fab,
+  body.tesorero-mode.screen-tesoreria .fab { display: flex; }
   .cal-game { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 14px; padding: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px; cursor: pointer; transition: transform 0.15s, background 0.15s; }
   .cal-game:active { transform: scale(0.98); }
   .cal-game.upcoming { border-left: 3px solid var(--gold); }
@@ -177,6 +190,7 @@
   .modal-close { background: var(--navy-2); border: 1px solid var(--line); color: var(--cream); width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: grid; place-items: center; }
   .modal-body { padding: 20px; }
   .modal-footer { padding: 16px 20px 24px; border-top: 1px solid var(--line); display: flex; gap: 10px; flex-wrap: wrap; }
+  .modal-footer.sticky { position: sticky; bottom: 0; background: var(--navy); box-shadow: 0 -4px 10px rgba(0,0,0,0.25); }
   .login-intro { text-align: center; padding: 20px 0 16px; }
   .login-intro .crown { font-size: 48px; margin-bottom: 8px; }
   .login-intro .title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2.5px; color: var(--gold); }
@@ -184,6 +198,7 @@
   .form-group { margin-bottom: 16px; }
   .form-label { display: block; font-size: 11px; color: var(--gold); margin-bottom: 6px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600; }
   .form-input, .form-select, .form-textarea { width: 100%; background: var(--navy-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--cream); font-family: 'DM Sans', sans-serif; font-size: 15px; transition: border-color 0.2s; }
+  .form-select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23e5b94a' d='M6 9L1 4h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
   .form-textarea { resize: vertical; min-height: 80px; font-family: 'DM Sans', sans-serif; }
   .form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--gold); background: var(--navy-3); }
   .form-input::placeholder, .form-textarea::placeholder { color: var(--text-muted); opacity: 0.6; }
@@ -200,6 +215,19 @@
   .radio-chip input { position: absolute; opacity: 0; pointer-events: none; }
   .radio-chip-label { display: block; padding: 10px 8px; background: var(--navy-2); border: 1px solid var(--line); border-radius: 8px; text-align: center; font-size: 12px; color: var(--cream-2); transition: all 0.15s; }
   .radio-chip input:checked + .radio-chip-label { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 600; }
+  /* Categoría chips (para gastos) */
+  .cat-chip-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .cat-chip { position: relative; cursor: pointer; }
+  .cat-chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .cat-chip-label { display: block; padding: 10px 2px; background: var(--navy-2); border: 1px solid var(--line); border-radius: 8px; text-align: center; font-size: 9px; color: var(--cream-2); transition: all 0.15s; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600; }
+  .cat-chip-label .emoji { font-size: 18px; display: block; margin-bottom: 2px; opacity: 0.8; }
+  .cat-chip input:checked + .cat-chip-label { background: var(--gold); color: var(--navy); border-color: var(--gold); }
+  .cat-chip input:checked + .cat-chip-label .emoji { opacity: 1; }
+  /* Input de monto destacado */
+  .amount-input-wrapper { position: relative; }
+  .amount-input-wrapper .currency-prefix { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-family: 'JetBrains Mono', monospace; color: var(--gold); font-size: 22px; font-weight: 700; pointer-events: none; z-index: 1; }
+  .amount-input { padding-left: 36px !important; font-family: 'JetBrains Mono', monospace !important; font-size: 24px !important; font-weight: 700 !important; color: var(--gold) !important; }
+  /* Buttons */
   .btn { flex: 1; padding: 14px 16px; border-radius: 10px; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; cursor: pointer; transition: all 0.15s; border: none; text-transform: uppercase; }
   .btn:active { transform: scale(0.97); }
   .btn-primary { background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%); color: var(--navy); box-shadow: 0 2px 10px rgba(229, 185, 74, 0.3); }
@@ -207,10 +235,10 @@
   .btn-danger { background: rgba(200, 66, 66, 0.15); color: var(--red); border: 1px solid var(--red-dark); }
   .btn-success { background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%); color: var(--navy); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  /* Botón principal grande (captura resultado) */
   .btn-hero { width: 100%; padding: 18px; border-radius: 14px; font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 3px; cursor: pointer; border: none; text-transform: uppercase; background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%); color: var(--navy); box-shadow: 0 4px 20px rgba(229, 185, 74, 0.35); margin-bottom: 16px; display: flex; align-items: center; justify-content: center; gap: 10px; }
   .btn-hero:active { transform: scale(0.98); }
   .btn-hero .icon { font-size: 26px; }
+  .btn-hero.secondary { background: var(--navy-2); color: var(--cream); border: 1px solid var(--gold-deep); box-shadow: none; }
   .form-error { background: rgba(200, 66, 66, 0.15); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; color: var(--red); font-size: 12px; margin-bottom: 14px; }
   .avatar-upload { width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 6px; background: var(--navy-2); border: 2px dashed var(--gold-deep); display: grid; place-items: center; cursor: pointer; position: relative; overflow: hidden; background-size: cover; background-position: center; transition: border-color 0.2s; }
   .avatar-upload-icon { color: var(--gold); font-size: 24px; }
@@ -232,14 +260,12 @@
   @keyframes crownGlow { 0%, 100% { filter: drop-shadow(0 0 2px var(--gold)); } 50% { filter: drop-shadow(0 0 8px var(--gold)); } }
   .inactive-banner { background: rgba(200, 66, 66, 0.12); border: 1px solid var(--red-dark); border-radius: 10px; padding: 10px 14px; text-align: center; margin-bottom: 16px; color: var(--red); font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 2px; }
   .inactive-subgrid-label { text-align: center; font-size: 11px; color: var(--text-muted); letter-spacing: 2px; margin: 20px 0 10px; text-transform: uppercase; }
-  /* ========== GAME DETAIL ========== */
   .game-detail-header { text-align: center; padding: 10px 0 18px; }
   .game-detail-date { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2.5px; color: var(--gold); }
   .game-detail-time { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--cream-2); margin-top: 4px; }
   .status-banner { padding: 10px; text-align: center; font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 2.5px; border-radius: 10px; margin-bottom: 18px; }
   .status-banner.programado { background: rgba(229, 185, 74, 0.12); color: var(--gold); border: 1px solid var(--gold-deep); }
   .status-banner.cancelado { background: rgba(138, 154, 170, 0.1); color: var(--text-muted); border: 1px solid var(--text-muted); }
-  /* Scoreboard */
   .scoreboard { background: linear-gradient(135deg, var(--navy-3) 0%, var(--navy-2) 100%); border: 1px solid var(--gold-deep); border-radius: 16px; padding: 18px; margin-bottom: 18px; }
   .scoreboard-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
   .scoreboard-row:last-child { border-bottom: none; }
@@ -254,7 +280,6 @@
   .result-badge.win { background: linear-gradient(135deg, rgba(107, 169, 107, 0.2) 0%, rgba(107, 169, 107, 0.1) 100%); color: var(--green); border: 1px solid var(--green-dark); }
   .result-badge.loss { background: linear-gradient(135deg, rgba(200, 66, 66, 0.18) 0%, rgba(200, 66, 66, 0.08) 100%); color: var(--red); border: 1px solid var(--red-dark); }
   .result-badge.tie { background: rgba(229, 185, 74, 0.12); color: var(--gold); border: 1px solid var(--gold-deep); }
-  /* Capturar resultado — scores inputs */
   .score-capture { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; margin-bottom: 20px; }
   .score-side { text-align: center; }
   .score-side-label { font-family: 'Bebas Neue', sans-serif; letter-spacing: 2px; font-size: 14px; margin-bottom: 8px; }
@@ -267,13 +292,135 @@
   .result-preview.win { color: var(--green); border-color: var(--green-dark); background: rgba(107, 169, 107, 0.08); }
   .result-preview.loss { color: var(--red); border-color: var(--red-dark); background: rgba(200, 66, 66, 0.08); }
   .result-preview.tie { color: var(--gold); border-color: var(--gold-deep); background: rgba(229, 185, 74, 0.08); }
-  /* Status toggle */
   .status-toggle { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .status-chip { position: relative; cursor: pointer; }
   .status-chip input { position: absolute; opacity: 0; pointer-events: none; }
   .status-chip-label { display: block; padding: 10px 4px; background: var(--navy-2); border: 1px solid var(--line); border-radius: 8px; text-align: center; font-size: 11px; font-weight: 600; color: var(--cream-2); letter-spacing: 1px; transition: all 0.15s; text-transform: uppercase; }
   .status-chip input:checked + .status-chip-label { background: var(--gold); color: var(--navy); border-color: var(--gold); }
   .notes-box { background: var(--navy-2); border-left: 3px solid var(--gold); border-radius: 0 10px 10px 0; padding: 12px 14px; margin-bottom: 18px; font-size: 13px; color: var(--cream-2); line-height: 1.5; font-style: italic; }
+  /* ASISTENCIA */
+  .attendance-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .att-stat-card { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 12px 8px; text-align: center; }
+  .att-stat-card.jugo { border-color: rgba(107, 169, 107, 0.4); background: linear-gradient(180deg, rgba(107, 169, 107, 0.08) 0%, var(--navy-2) 100%); }
+  .att-stat-card.aviso { border-color: rgba(212, 143, 58, 0.4); background: linear-gradient(180deg, rgba(212, 143, 58, 0.08) 0%, var(--navy-2) 100%); }
+  .att-stat-card.pend { border-color: rgba(138, 154, 170, 0.3); }
+  .att-stat-number { font-family: 'Bebas Neue', sans-serif; font-size: 28px; line-height: 1; margin-bottom: 2px; }
+  .att-stat-card.jugo .att-stat-number { color: var(--green); }
+  .att-stat-card.aviso .att-stat-number { color: var(--orange); }
+  .att-stat-card.pend .att-stat-number { color: var(--text-muted); }
+  .att-stat-label { font-size: 10px; color: var(--text-muted); letter-spacing: 1.5px; text-transform: uppercase; }
+  .att-money-card { background: linear-gradient(135deg, var(--gold-deep) 0%, var(--navy-3) 100%); border: 1px solid var(--gold-dark); border-radius: 14px; padding: 16px; margin-bottom: 18px; }
+  .att-money-total { font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 1px; color: var(--gold); line-height: 1; }
+  .att-money-total small { font-size: 14px; opacity: 0.75; vertical-align: top; margin-right: 4px; }
+  .att-money-label { font-size: 10px; color: var(--cream-2); opacity: 0.85; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 4px; }
+  .att-money-footer { display: flex; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(229, 185, 74, 0.2); font-size: 11px; color: var(--cream-2); flex-wrap: wrap; }
+  .att-money-footer strong { font-family: 'JetBrains Mono', monospace; font-weight: 700; display: block; margin-top: 2px; font-size: 13px; }
+  .att-money-footer .cobrado strong { color: var(--green); }
+  .att-money-footer .por-cobrar strong { color: var(--red); }
+  .att-player-row { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; transition: border-color 0.15s; }
+  .att-player-row.jugo { border-left: 3px solid var(--green); }
+  .att-player-row.no_asistio { border-left: 3px solid var(--orange); }
+  .att-player-row.pendiente { border-left: 3px solid var(--text-muted); opacity: 0.85; }
+  .att-player-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .att-player-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--navy-3); display: grid; place-items: center; font-family: 'Bebas Neue', sans-serif; color: var(--gold); font-size: 13px; flex-shrink: 0; border: 1px solid var(--gold-deep); overflow: hidden; background-size: cover; background-position: center; }
+  .att-player-info { flex: 1; min-width: 0; }
+  .att-player-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .att-player-num { color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 0.5px; }
+  .att-player-amount { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .att-player-amount strong { color: var(--gold); }
+  .att-player-pay { flex-shrink: 0; }
+  .att-pay-toggle { background: var(--navy-3); border: 1px solid var(--line); border-radius: 20px; padding: 6px 12px; font-size: 11px; color: var(--text-muted); cursor: pointer; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; display: flex; align-items: center; gap: 5px; transition: all 0.15s; }
+  .att-pay-toggle.paid { background: rgba(107, 169, 107, 0.15); color: var(--green); border-color: var(--green-dark); }
+  .att-pay-toggle:active { transform: scale(0.95); }
+  .att-estado-toggle { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .att-estado-btn { background: var(--navy-3); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1px; color: var(--cream-2); cursor: pointer; transition: all 0.15s; text-transform: uppercase; }
+  .att-estado-btn.active-jugo { background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%); color: var(--navy); border-color: var(--green); font-weight: 600; }
+  .att-estado-btn.active-aviso { background: linear-gradient(135deg, var(--orange) 0%, #a66b28 100%); color: var(--navy); border-color: var(--orange); font-weight: 600; }
+  .att-estado-btn.active-pend { background: var(--text-muted); color: var(--navy); border-color: var(--text-muted); font-weight: 600; }
+  .att-estado-btn:active { transform: scale(0.95); }
+  .att-bulk-actions { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .att-bulk-btn { flex: 1; min-width: 0; background: var(--navy-3); border: 1px solid var(--line); color: var(--cream-2); padding: 8px 6px; border-radius: 8px; font-size: 10px; letter-spacing: 1px; cursor: pointer; font-family: 'Bebas Neue', sans-serif; text-transform: uppercase; }
+  .att-bulk-btn:active { transform: scale(0.97); }
+  .attendance-mini-summary { background: var(--navy-2); border: 1px solid var(--gold-deep); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  .attendance-mini-title { font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 2px; color: var(--gold); margin-bottom: 8px; }
+  .attendance-mini-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--cream-2); margin-bottom: 4px; }
+  .attendance-mini-row strong { font-family: 'JetBrains Mono', monospace; color: var(--cream); }
+  .mini-pill { display: inline-block; padding: 2px 7px; border-radius: 10px; font-family: 'Bebas Neue', sans-serif; font-size: 10px; letter-spacing: 1px; margin-right: 4px; }
+  .mini-pill.jugo { background: rgba(107, 169, 107, 0.2); color: var(--green); }
+  .mini-pill.aviso { background: rgba(212, 143, 58, 0.2); color: var(--orange); }
+  .mini-pill.pend { background: rgba(138, 154, 170, 0.2); color: var(--text-muted); }
+  /* Gastos mini summary (en detalle de juego) */
+  .expenses-mini-summary { background: var(--navy-2); border: 1px solid var(--red-dark); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  .expenses-mini-title { font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 2px; color: var(--red); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .expenses-mini-title strong { font-family: 'JetBrains Mono', monospace; color: var(--red); font-size: 14px; }
+  .expenses-mini-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 12px; color: var(--cream-2); gap: 8px; }
+  .expenses-mini-item .amt { font-family: 'JetBrains Mono', monospace; color: var(--cream); font-weight: 700; }
+  /* Filtro de chips en lista de gastos */
+  .filter-chips { display: flex; gap: 6px; margin-bottom: 14px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  .filter-chip { flex-shrink: 0; background: var(--navy-2); border: 1px solid var(--line); color: var(--cream-2); padding: 6px 12px; border-radius: 18px; font-size: 11px; letter-spacing: 1px; cursor: pointer; font-family: 'Bebas Neue', sans-serif; text-transform: uppercase; transition: all 0.15s; }
+  .filter-chip.active { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 600; }
+  .expenses-total-bar { background: linear-gradient(135deg, var(--red-dark) 0%, var(--navy-3) 100%); border: 1px solid var(--red-dark); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .expenses-total-bar-label { font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 2px; color: var(--cream-2); opacity: 0.85; }
+  .expenses-total-bar-value { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; color: var(--cream); }
+  /* ========== CONTRIBUCIONES / INGRESOS EXTRA ========== */
+  .income-split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .income-mini-card { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px 14px; }
+  .income-mini-card.cuotas { border-left: 3px solid var(--green); }
+  .income-mini-card.extra { border-left: 3px solid var(--gold); }
+  .income-mini-label { font-size: 10px; color: var(--text-muted); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 6px; }
+  .income-mini-value { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; line-height: 1; }
+  .income-mini-value small { font-size: 14px; opacity: 0.7; margin-right: 2px; }
+  .income-mini-card.cuotas .income-mini-value { color: var(--green); }
+  .income-mini-card.extra .income-mini-value { color: var(--gold); }
+  .income-mini-sub { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 4px; }
+  /* Lista de contribuciones */
+  .contrib-row { display: flex; align-items: center; gap: 12px; padding: 12px; border-bottom: 1px solid var(--line-soft); }
+  .contrib-row:last-child { border-bottom: none; }
+  .contrib-row-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-size: 16px; flex-shrink: 0; }
+  .contrib-row-icon.jugador { background: rgba(229, 185, 74, 0.12); }
+  .contrib-row-icon.patrocinador { background: rgba(107, 169, 107, 0.12); }
+  .contrib-row-icon.otro { background: rgba(138, 154, 170, 0.12); }
+  .contrib-row-body { flex: 1; min-width: 0; }
+  .contrib-row-donante { font-size: 14px; font-weight: 600; color: var(--cream); line-height: 1.2; }
+  .contrib-row-donante.anonimo { font-style: italic; color: var(--cream-2); }
+  .contrib-row-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .contrib-row-meta .tag { padding: 1px 6px; border-radius: 4px; font-size: 9px; letter-spacing: 0.5px; font-family: 'Bebas Neue', sans-serif; }
+  .contrib-row-meta .tag.privado { background: rgba(200, 66, 66, 0.15); color: var(--red); }
+  .contrib-row-meta .tag.anonimo { background: rgba(138, 154, 170, 0.15); color: var(--text-muted); }
+  .contrib-row-value { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--gold); font-size: 14px; flex-shrink: 0; }
+  /* Vitrina de patrocinadores (Home) */
+  .sponsors-section { margin: 22px 0 18px; }
+  .sponsors-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .sponsors-title-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 2px; color: var(--gold); }
+  .sponsors-title-sub { font-family: 'Caveat', cursive; font-size: 14px; color: var(--cream-2); opacity: 0.85; }
+  .sponsors-grid { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .sponsors-grid::-webkit-scrollbar { display: none; }
+  .sponsor-card { flex-shrink: 0; width: 180px; background: linear-gradient(135deg, rgba(229, 185, 74, 0.08) 0%, var(--navy-2) 100%); border: 1px solid var(--gold-deep); border-radius: 14px; padding: 14px 14px 12px; }
+  .sponsor-card-icon { font-size: 20px; margin-bottom: 6px; }
+  .sponsor-card-name { font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 1px; color: var(--cream); line-height: 1.2; min-height: 34px; }
+  .sponsor-card-amount { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--gold); font-size: 15px; margin-top: 6px; }
+  .sponsor-card-meta { font-size: 9px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; margin-top: 4px; }
+  /* Form de contribución */
+  .contrib-type-selector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 4px; }
+  .contrib-type-btn { background: var(--navy-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 6px; cursor: pointer; text-align: center; transition: all 0.15s; }
+  .contrib-type-btn:active { transform: scale(0.96); }
+  .contrib-type-btn.active { background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%); border-color: var(--gold); color: var(--navy); }
+  .contrib-type-btn.active .contrib-type-label { color: var(--navy); font-weight: 700; }
+  .contrib-type-icon { font-size: 22px; margin-bottom: 4px; }
+  .contrib-type-label { font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1px; color: var(--cream-2); }
+  .visibility-selector { display: grid; gap: 8px; }
+  .visibility-option { background: var(--navy-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+  .visibility-option.active { border-color: var(--gold); background: rgba(229, 185, 74, 0.08); }
+  .visibility-option input { accent-color: var(--gold); }
+  .visibility-option-body { flex: 1; }
+  .visibility-option-title { font-size: 13px; font-weight: 600; color: var(--cream); }
+  .visibility-option-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.3; }
+  /* Deuda/excedente en fila de jugador */
+  .debt-pill.credit { background: rgba(229, 185, 74, 0.15); color: var(--gold); border: 1px solid var(--gold-deep); }
+  .concept-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .concept-chip { background: var(--navy-2); border: 1px solid var(--line); color: var(--cream-2); padding: 6px 12px; border-radius: 16px; font-size: 11px; cursor: pointer; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; transition: all 0.15s; }
+  .concept-chip.active { background: var(--gold); color: var(--navy); border-color: var(--gold); }
+  .concept-chip:active { transform: scale(0.96); }
 </style>
 </head>
 <body>

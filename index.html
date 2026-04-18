@@ -13,12 +13,16 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="7">
+<meta name="app-version" content="8">
 
 <title>Tazos Dorados · Liga Veteranos 40+</title>
 <meta name="description" content="App oficial del equipo de béisbol Tazos Dorados 40+">
 
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="manifest" href="manifest.webmanifest?v=8">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=8">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=8">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=8">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=8">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -518,6 +522,37 @@
   body.lightbox-open { overflow: hidden; }
   /* Badge de versión (discreto, esquina inferior derecha) */
   .app-version { position: fixed; bottom: 82px; right: 6px; font-size: 9px; color: var(--text-muted); opacity: 0.35; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; pointer-events: none; z-index: 5; }
+  /* ========== INSTALL / UPDATE BANNERS ========== */
+  .install-banner, .update-banner {
+    position: fixed; left: 50%; transform: translateX(-50%) translateY(120%);
+    bottom: 80px; width: calc(100% - 24px); max-width: 406px;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+    color: var(--navy); padding: 12px 14px; border-radius: 14px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 8px 30px rgba(229, 185, 74, 0.4), 0 0 0 1px var(--gold-dark);
+    z-index: 70; opacity: 0; transition: transform 0.35s ease, opacity 0.3s;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .install-banner.show, .update-banner.show {
+    transform: translateX(-50%) translateY(0); opacity: 1;
+  }
+  .update-banner { background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%); box-shadow: 0 8px 30px rgba(107, 169, 107, 0.4), 0 0 0 1px var(--green-dark); }
+  .install-banner-icon, .update-banner-icon { font-size: 24px; flex-shrink: 0; }
+  .install-banner-body, .update-banner-body { flex: 1; min-width: 0; }
+  .install-banner-title, .update-banner-title { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1.5px; line-height: 1.1; }
+  .install-banner-sub, .update-banner-sub { font-size: 11px; opacity: 0.85; margin-top: 2px; }
+  .install-banner-btn, .update-banner-btn {
+    background: var(--navy); color: var(--gold); border: none; padding: 8px 14px;
+    border-radius: 8px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1.5px;
+    font-size: 12px; cursor: pointer; flex-shrink: 0;
+  }
+  .update-banner-btn { color: var(--green); }
+  .install-banner-btn:active, .update-banner-btn:active { transform: scale(0.96); }
+  .install-banner-close {
+    background: transparent; border: none; color: var(--navy); opacity: 0.5;
+    font-size: 20px; cursor: pointer; padding: 4px 8px; flex-shrink: 0;
+  }
+  .install-banner-close:active { opacity: 1; }
 </style>
 </head>
 <body>
@@ -574,6 +609,25 @@
   </nav>
 </div>
 
+<div class="install-banner" id="installBanner">
+  <div class="install-banner-icon">📲</div>
+  <div class="install-banner-body">
+    <div class="install-banner-title">Instala los Tazos</div>
+    <div class="install-banner-sub">Accesos directos desde tu celular</div>
+  </div>
+  <button class="install-banner-btn" id="installBannerBtn">Instalar</button>
+  <button class="install-banner-close" id="installBannerClose">×</button>
+</div>
+
+<div class="update-banner" id="updateBanner">
+  <div class="update-banner-icon">🔄</div>
+  <div class="update-banner-body">
+    <div class="update-banner-title">Hay una versión nueva</div>
+    <div class="update-banner-sub">Toca para actualizar</div>
+  </div>
+  <button class="update-banner-btn" id="updateBannerBtn">Actualizar</button>
+</div>
+
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal" id="modalContent"></div>
 </div>
@@ -596,10 +650,10 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="config.js?v=8"></script>
+<script src="app.js?v=8"></script>
 
-<div class="app-version">v7</div>
+<div class="app-version">v8</div>
 
 </body>
 </html>

@@ -3289,6 +3289,135 @@ async function uploadSinglePhoto(file, gameId) {
 }
 
 // ============================================================
+// PWA: Service Worker + Install Banner + Update detection
+// ============================================================
+let deferredInstallPrompt = null;
+
+function initPWA() {
+  // 1. Registrar service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      // Detectar nuevas versiones
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        if (!newSW) return;
+        newSW.addEventListener('statechange', () => {
+          // Si ya había un SW previo y el nuevo terminó de instalarse → hay update
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(reg);
+          }
+        });
+      });
+
+      // Revisar si hay update disponible cada 60 segundos mientras la app está abierta
+      setInterval(() => reg.update().catch(() => {}), 60000);
+    }).catch((err) => {
+      console.warn('SW registro falló:', err);
+    });
+
+    // Cuando el SW nuevo toma control, recargar para aplicar cambios
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    });
+  }
+
+  // 2. Banner de instalación — escuchar beforeinstallprompt
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    // Mostrar solo si el usuario no ha descartado antes y no está ya instalada
+    if (localStorage.getItem('installBannerDismissed')) return;
+    if (window.matchMedia('(display-mode: standalone)').matches) return;
+    setTimeout(() => {
+      const banner = document.getElementById('installBanner');
+      if (banner) banner.classList.add('show');
+    }, 2000);
+  });
+
+  // 3. Listeners del banner
+  const installBanner = document.getElementById('installBanner');
+  const installBtn = document.getElementById('installBannerBtn');
+  const closeBtn = document.getElementById('installBannerClose');
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      installBanner.classList.remove('show');
+      deferredInstallPrompt.prompt();
+      const { outcome } = await deferredInstallPrompt.userChoice;
+      if (outcome === 'accepted') {
+        localStorage.setItem('installBannerDismissed', '1');
+      }
+      deferredInstallPrompt = null;
+    });
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      installBanner.classList.remove('show');
+      localStorage.setItem('installBannerDismissed', '1');
+    });
+  }
+
+  // 4. Banner "instalado correctamente"
+  window.addEventListener('appinstalled', () => {
+    if (installBanner) installBanner.classList.remove('show');
+    localStorage.setItem('installBannerDismissed', '1');
+  });
+
+  // 5. Safari iOS: no soporta beforeinstallprompt. Mostramos hint solo si no es standalone.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                        window.navigator.standalone === true;
+  if (isIOS && !isStandalone && !localStorage.getItem('installBannerDismissed')) {
+    // Safari no expone prompt, pero podemos decirle al usuario cómo hacerlo
+    setTimeout(() => showIOSInstallHint(), 3000);
+  }
+
+  // 6. Shortcut via URL (?s=tesoreria etc, para atajos del manifest)
+  const urlParams = new URLSearchParams(window.location.search);
+  const shortcut = urlParams.get('s');
+  if (shortcut && ['home','tesoreria','roster','calendario','galeria'].includes(shortcut)) {
+    setTimeout(() => showScreen(shortcut), 100);
+  }
+}
+
+function showUpdateBanner(reg) {
+  const banner = document.getElementById('updateBanner');
+  const btn = document.getElementById('updateBannerBtn');
+  if (!banner) return;
+  banner.classList.add('show');
+  btn.onclick = () => {
+    // Le decimos al SW que se active YA y luego recargamos
+    if (reg.waiting) {
+      reg.waiting.postMessage('SKIP_WAITING');
+    }
+    banner.classList.remove('show');
+  };
+}
+
+function showIOSInstallHint() {
+  const banner = document.getElementById('installBanner');
+  if (!banner) return;
+  banner.innerHTML = `
+    <div class="install-banner-icon">📲</div>
+    <div class="install-banner-body">
+      <div class="install-banner-title">Instala los Tazos</div>
+      <div class="install-banner-sub">Toca <strong>Compartir ↗</strong> y luego <strong>"Añadir a inicio"</strong></div>
+    </div>
+    <button class="install-banner-close" id="installBannerCloseIOS">×</button>
+  `;
+  banner.classList.add('show');
+  document.getElementById('installBannerCloseIOS').addEventListener('click', () => {
+    banner.classList.remove('show');
+    localStorage.setItem('installBannerDismissed', '1');
+  });
+}
+
+// ============================================================
 // NAVEGACIÓN
 // ============================================================
 const screens = document.querySelectorAll('.screen');
@@ -3378,6 +3507,7 @@ window.openGameLightbox = openGameLightbox;
 // INICIO
 (async () => {
   initLightbox();
+  initPWA();
   await checkAuthStatus();
   document.body.classList.add('screen-home');
   loadHome();

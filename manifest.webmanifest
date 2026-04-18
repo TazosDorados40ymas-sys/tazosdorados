@@ -1,7 +1,7 @@
 {
-  "name": "Tazos Dorados 40+",
+  "name": "Tazos Dorados",
   "short_name": "Tazos",
-  "description": "App oficial del equipo Tazos Dorados · Liga Veteranos 40+",
+  "description": "App oficial del equipo de béisbol Tazos Dorados · Liga Veteranos 40+",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,19 +9,55 @@
   "background_color": "#0b1622",
   "theme_color": "#0b1622",
   "lang": "es-MX",
-  "categories": ["sports"],
+  "dir": "ltr",
+  "categories": ["sports", "lifestyle"],
   "icons": [
     {
-      "src": "https://api.dicebear.com/7.x/initials/png?seed=TD&backgroundColor=0b1622&textColor=e5b94a&size=192",
+      "src": "icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "https://api.dicebear.com/7.x/initials/png?seed=TD&backgroundColor=0b1622&textColor=e5b94a&size=512",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Próximo juego",
+      "short_name": "Juego",
+      "description": "Ver el próximo juego programado",
+      "url": "./?s=home",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Cuentas",
+      "short_name": "Cuentas",
+      "description": "Ver saldo y movimientos del equipo",
+      "url": "./?s=tesoreria",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Roster",
+      "short_name": "Roster",
+      "description": "Ver jugadores del equipo",
+      "url": "./?s=roster",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

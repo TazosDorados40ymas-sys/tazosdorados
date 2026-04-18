@@ -1,0 +1,27 @@
+{
+  "name": "Tazos Dorados 40+",
+  "short_name": "Tazos",
+  "description": "App oficial del equipo Tazos Dorados · Liga Veteranos 40+",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1622",
+  "theme_color": "#0b1622",
+  "lang": "es-MX",
+  "categories": ["sports"],
+  "icons": [
+    {
+      "src": "https://api.dicebear.com/7.x/initials/png?seed=TD&backgroundColor=0b1622&textColor=e5b94a&size=192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://api.dicebear.com/7.x/initials/png?seed=TD&backgroundColor=0b1622&textColor=e5b94a&size=512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

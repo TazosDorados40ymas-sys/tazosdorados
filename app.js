@@ -16,7 +16,13 @@ const db = createClient(
   { auth: { persistSession: true, autoRefreshToken: true } }
 );
 
-const state = { user: null, isTesorero: false, currentScreen: 'home' };
+const state = { 
+  user: null, 
+  isTesorero: false, 
+  isPlayer: false,        // ← NUEVO: jugador con cuenta activa
+  playerInfo: null,       // ← NUEVO: datos del jugador si tiene cuenta
+  currentScreen: 'home' 
+};
 
 const POSICIONES = [
   { code: 'P', name: 'Pitcher' }, { code: 'C', name: 'Catcher' },
@@ -150,22 +156,59 @@ modalBackdrop.addEventListener('click', (e) => {
 });
 
 // ============================================================
-// AUTH
+// AUTH — 3 roles: tesorero, jugador, invitado (público)
 // ============================================================
 async function checkAuthStatus() {
   const { data: { session } } = await db.auth.getSession();
-  if (session) {
-    state.user = session.user;
-    const { data: tesorero } = await db.from('tesoreros').select('*').eq('user_id', session.user.id).maybeSingle();
-    if (tesorero) {
-      state.isTesorero = true;
-      enableTesoreroMode(tesorero.nombre);
-    }
+  
+  if (!session) {
+    // Modo invitado (público)
+    state.user = null;
+    state.isTesorero = false;
+    state.isPlayer = false;
+    state.playerInfo = null;
+    document.body.classList.add('guest-mode');
+    document.body.classList.remove('tesorero-mode', 'player-mode');
+    return;
   }
+
+  state.user = session.user;
+
+  // Verificar si es tesorero
+  const { data: tesorero } = await db.from('tesoreros')
+    .select('*').eq('user_id', session.user.id).maybeSingle();
+
+  if (tesorero) {
+    state.isTesorero = true;
+    enableTesoreroMode(tesorero.nombre);
+    return;
+  }
+
+  // Verificar si es jugador con cuenta activa
+  const { data: playerAccount } = await db.from('player_accounts')
+    .select('*, players(*)')
+    .eq('user_id', session.user.id)
+    .eq('activo', true)
+    .maybeSingle();
+
+  if (playerAccount && playerAccount.players) {
+    state.isPlayer = true;
+    state.playerInfo = playerAccount.players;
+    enablePlayerMode(playerAccount.players);
+    // Actualizar last_login
+    db.from('player_accounts').update({ last_login: new Date().toISOString() })
+      .eq('id', playerAccount.id).then(() => {});
+    return;
+  }
+
+  // Usuario autenticado pero sin rol — cerrar sesión
+  await db.auth.signOut();
+  document.body.classList.add('guest-mode');
 }
 
 function enableTesoreroMode(nombre) {
   document.body.classList.add('tesorero-mode');
+  document.body.classList.remove('guest-mode', 'player-mode');
   const btn = document.getElementById('adminBtn');
   btn.innerHTML = '<span class="crown-badge">👑</span>';
   btn.classList.add('active');
@@ -173,34 +216,53 @@ function enableTesoreroMode(nombre) {
   document.getElementById('header-subtitle').textContent = `TESORERO · ${(nombre || '').toUpperCase()}`;
 }
 
-function disableTesoreroMode() {
-  document.body.classList.remove('tesorero-mode');
+function enablePlayerMode(player) {
+  document.body.classList.add('player-mode');
+  document.body.classList.remove('guest-mode', 'tesorero-mode');
+  const btn = document.getElementById('adminBtn');
+  btn.innerHTML = '⚾';
+  btn.classList.add('active');
+  btn.title = `${player.apodo || player.nombre} #${player.numero}`;
+  const displayName = player.apodo || player.nombre.split(' ')[0];
+  document.getElementById('header-subtitle').textContent = `#${player.numero} · ${displayName.toUpperCase()}`;
+}
+
+function disableAllAuthModes() {
+  document.body.classList.remove('tesorero-mode', 'player-mode');
+  document.body.classList.add('guest-mode');
   const btn = document.getElementById('adminBtn');
   btn.innerHTML = '🔒';
   btn.classList.remove('active');
-  btn.title = 'Modo tesorero';
+  btn.title = 'Iniciar sesión';
   document.getElementById('header-subtitle').textContent = 'LIGA VETERANOS 40+ · 2026';
   state.user = null;
   state.isTesorero = false;
+  state.isPlayer = false;
+  state.playerInfo = null;
+}
+
+// Alias para mantener compatibilidad con código previo
+function disableTesoreroMode() {
+  disableAllAuthModes();
 }
 
 function showLoginModal() {
   openModal(`
     <div class="modal-header">
-      <h2>ACCESO TESORERO</h2>
+      <h2>ENTRAR</h2>
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
       <div class="login-intro">
-        <div class="crown">👑</div>
-        <div class="title">"TE GANASTE LA BECA"</div>
-        <div class="quote">Coqueto, necesito tus datos</div>
+        <div class="crown">⚾</div>
+        <div class="title">"BIENVENIDO, TAZO"</div>
+        <div class="quote">Usa el correo que te dio el tesorero</div>
       </div>
       <form id="loginForm">
         <div id="loginError"></div>
         <div class="form-group">
           <label class="form-label">Correo</label>
-          <input type="email" class="form-input" id="loginEmail" required autocomplete="email">
+          <input type="email" class="form-input" id="loginEmail" required autocomplete="email" autocapitalize="none">
         </div>
         <div class="form-group">
           <label class="form-label">Contraseña</label>
@@ -240,35 +302,61 @@ async function handleLogin() {
     const { data, error } = await db.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
-    const { data: tesorero } = await db.from('tesoreros').select('*').eq('user_id', data.user.id).maybeSingle();
+    // Verificar tesorero primero
+    const { data: tesorero } = await db.from('tesoreros')
+      .select('*').eq('user_id', data.user.id).maybeSingle();
 
-    if (!tesorero) {
-      await db.auth.signOut();
-      throw new Error('Tu usuario no tiene permisos de tesorero.');
+    if (tesorero) {
+      state.user = data.user;
+      state.isTesorero = true;
+      enableTesoreroMode(tesorero.nombre);
+      closeModal();
+      reloadCurrentScreen();
+      return;
     }
 
-    state.user = data.user;
-    state.isTesorero = true;
-    enableTesoreroMode(tesorero.nombre);
-    closeModal();
-    reloadCurrentScreen();
+    // Verificar jugador
+    const { data: playerAccount } = await db.from('player_accounts')
+      .select('*, players(*)')
+      .eq('user_id', data.user.id)
+      .eq('activo', true)
+      .maybeSingle();
+
+    if (playerAccount && playerAccount.players) {
+      state.user = data.user;
+      state.isPlayer = true;
+      state.playerInfo = playerAccount.players;
+      enablePlayerMode(playerAccount.players);
+      db.from('player_accounts').update({ last_login: new Date().toISOString() })
+        .eq('id', playerAccount.id).then(() => {});
+      closeModal();
+      reloadCurrentScreen();
+      return;
+    }
+
+    // Autenticado pero sin rol
+    await db.auth.signOut();
+    throw new Error('Tu cuenta no está activa. Contacta al tesorero.');
   } catch (err) {
-    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message || 'Error al entrar')}</div>`;
+    let msg = err.message || 'Error al entrar';
+    if (msg.includes('Invalid login')) msg = 'Correo o contraseña incorrecta';
+    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(msg)}</div>`;
     submitBtn.disabled = false;
     submitBtn.textContent = 'Entrar';
   }
 }
 
 function showLogoutConfirm() {
+  const rolTxt = state.isTesorero ? 'modo tesorero' : 'tu cuenta';
   openModal(`
     <div class="modal-header">
-      <h2>SALIR DE MODO TESORERO</h2>
+      <h2>CERRAR SESIÓN</h2>
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
       <div style="text-align: center; padding: 20px 0;">
         <div style="font-size: 48px; margin-bottom: 12px;">👋</div>
-        <p style="color: var(--cream-2);">¿Seguro que quieres salir?</p>
+        <p style="color: var(--cream-2);">¿Seguro que quieres salir de ${rolTxt}?</p>
       </div>
     </div>
     <div class="modal-footer">
@@ -280,21 +368,133 @@ function showLogoutConfirm() {
 
 async function handleLogout() {
   await db.auth.signOut();
-  disableTesoreroMode();
+  disableAllAuthModes();
   closeModal();
   reloadCurrentScreen();
 }
 
 document.getElementById('adminBtn').addEventListener('click', () => {
-  if (state.isTesorero) showLogoutConfirm();
+  if (state.isTesorero || state.isPlayer) showLogoutConfirm();
   else showLoginModal();
 });
 
 // ============================================================
-// PANTALLA: INICIO
+// PANTALLA: INICIO (público o privado según login)
 // ============================================================
 async function loadHome() {
   const container = document.getElementById('home-content');
+
+  // Si es invitado (sin login): mostrar gate público
+  if (!state.isTesorero && !state.isPlayer) {
+    return loadPublicHome(container);
+  }
+
+  // Si está logueado: mostrar home completa
+  return loadPrivateHome(container);
+}
+
+async function loadPublicHome(container) {
+  try {
+    const [recordRes, nextGameRes, sponsorsRes, teamInfoRes] = await Promise.all([
+      db.from('v_public_record').select('*').maybeSingle(),
+      db.from('v_public_next_game').select('*').maybeSingle(),
+      db.from('v_public_patrocinadores').select('*').limit(6),
+      db.from('v_public_team_info').select('*').maybeSingle()
+    ]);
+
+    const record = recordRes.data || { wins: 0, losses: 0, ties: 0 };
+    const nextGame = nextGameRes.data;
+    const sponsors = sponsorsRes.data || [];
+    const teamInfo = teamInfoRes.data || { total_jugadores: 0 };
+
+    let html = `
+      <div class="public-gate">
+        <div class="public-gate-title">Tazos</div>
+        <div class="public-gate-sub">Dorados</div>
+        <div class="public-gate-league">LIGA VETERANOS 40+ · 2026</div>
+
+        <button class="public-login-btn" onclick="showLoginModal()">
+          🔐 ENTRAR A LA APP
+        </button>
+
+        <div class="public-hint">Pide acceso al tesorero para ver todo</div>
+      </div>`;
+
+    // Récord público
+    html += `
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Récord</div>
+          <div class="record-split">
+            <span class="wins">${record.wins}</span>
+            <span class="dash">—</span>
+            <span class="losses">${record.losses}</span>
+          </div>
+          <div class="stat-trend gold">${record.juegos_jugados} juegos jugados</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Roster</div>
+          <div class="stat-value" style="color: var(--gold);">${teamInfo.total_jugadores}</div>
+          <div class="stat-trend">Tazos activos</div>
+        </div>
+      </div>`;
+
+    // Próximo juego (si hay)
+    if (nextGame) {
+      html += `
+        <div class="next-game" style="cursor: default;">
+          <div class="game-date">${formatDateLong(nextGame.fecha, nextGame.hora)}</div>
+          <div class="game-matchup">
+            <div class="team-side">
+              <div class="team-name us">TAZOS</div>
+              <div class="team-label">${nextGame.es_local ? 'LOCAL' : 'VISITA'}</div>
+            </div>
+            <div class="vs-box">VS</div>
+            <div class="team-side">
+              <div class="team-name">${escapeHtml(nextGame.rival || 'POR DEFINIR')}</div>
+              <div class="team-label">${nextGame.es_local ? 'VISITA' : 'LOCAL'}</div>
+            </div>
+          </div>
+          ${nextGame.campo ? `<div class="game-meta"><span>📍 ${escapeHtml(nextGame.campo)}</span></div>` : ''}
+        </div>`;
+    }
+
+    // Vitrina de patrocinadores pública
+    if (sponsors.length > 0) {
+      html += `
+        <div class="sponsors-section">
+          <div class="sponsors-title">
+            <div class="sponsors-title-label">🤝 NUESTROS PATROCINADORES</div>
+            <div class="sponsors-title-sub">"Gracias, coquetos"</div>
+          </div>
+          <div class="sponsors-grid">`;
+      for (const s of sponsors) {
+        html += `
+          <div class="sponsor-card">
+            <div class="sponsor-card-icon">🏆</div>
+            <div class="sponsor-card-name">${escapeHtml(s.nombre)}</div>
+            <div class="sponsor-card-amount">${formatMoney(s.total_aportado)}</div>
+            <div class="sponsor-card-meta">${s.num_contribuciones} aportación${s.num_contribuciones > 1 ? 'es' : ''}</div>
+          </div>`;
+      }
+      html += `</div></div>`;
+    }
+
+    // Motto
+    html += `
+      <div class="identity-card">
+        <div class="identity-motto">SOMOS EDICIÓN LIMITADA</div>
+        <div class="identity-sub">Tazos dorados, diamantes en bruto.<br>Un solo equipo.</div>
+      </div>`;
+
+    container.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = errorBox('No se pudo cargar.', err.message);
+  }
+}
+
+async function loadPrivateHome(container) {
   try {
     const [nextGameRes, recordRes, balanceRes, expensesRes, contribRes, sponsorsRes] = await Promise.all([
       db.from('v_next_game').select('*').maybeSingle(),
@@ -342,6 +542,44 @@ async function loadHome() {
     }
 
     const rachaTxt = record.wins >= 3 ? '¡Ya parió la cochi! En racha' : record.wins > 0 ? 'Vamos en caballo' : 'Arrancando la temporada';
+
+    // Si es tesorero: ver saldo. Si es jugador: ver su propia info.
+    let secondStatCard = '';
+    if (state.isTesorero) {
+      secondStatCard = `
+        <div class="stat-card">
+          <div class="stat-label">Saldo equipo</div>
+          <div class="stat-value money">${formatMoney(balance.balance)}</div>
+          <div class="stat-trend">Entradas: ${formatMoney(balance.total_ingresos)}</div>
+        </div>`;
+    } else if (state.isPlayer && state.playerInfo) {
+      // Jugadores ven sus propios datos
+      const { data: myStatus } = await db.from('v_player_status')
+        .select('*').eq('id', state.playerInfo.id).maybeSingle();
+      const deuda = Number(myStatus?.deuda_pendiente || 0);
+      const voluntarias = Number(myStatus?.total_voluntarias || 0);
+      const excedente = Number(myStatus?.excedente_fondo || 0);
+
+      let miEstado, miLabel;
+      if (deuda > 0) {
+        miEstado = `−${formatMoney(deuda)}`;
+        miLabel = 'Pendiente por cobrar';
+      } else if (excedente > 0) {
+        miEstado = `+${formatMoney(excedente)}`;
+        miLabel = `Aportado voluntario`;
+      } else {
+        miEstado = 'OK';
+        miLabel = '¡Tazo al corriente!';
+      }
+
+      secondStatCard = `
+        <div class="stat-card">
+          <div class="stat-label">Mi cuenta</div>
+          <div class="stat-value money" style="color: ${deuda > 0 ? 'var(--red)' : excedente > 0 ? 'var(--gold)' : 'var(--green)'};">${miEstado}</div>
+          <div class="stat-trend">${miLabel}</div>
+        </div>`;
+    }
+
     html += `
       <div class="stat-grid">
         <div class="stat-card">
@@ -353,11 +591,7 @@ async function loadHome() {
           </div>
           <div class="stat-trend gold">${rachaTxt}</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Saldo equipo</div>
-          <div class="stat-value money">${formatMoney(balance.balance)}</div>
-          <div class="stat-trend">Entradas: ${formatMoney(balance.total_ingresos)}</div>
-        </div>
+        ${secondStatCard}
       </div>
       <div class="identity-card">
         <div class="identity-motto">SOMOS EDICIÓN LIMITADA</div>
@@ -385,47 +619,40 @@ async function loadHome() {
       html += `</div></div>`;
     }
 
-    // Últimos movimientos — mezcla gastos (egresos) + contribuciones (ingresos)
-    const movements = [
-      ...recentExpenses.map(e => ({
-        tipo: 'egreso',
-        fecha: e.fecha,
-        titulo: e.descripcion || e.categoria,
-        sub: e.categoria,
-        monto: Number(e.monto)
-      })),
-      ...recentContribs.map(c => ({
-        tipo: 'ingreso',
-        fecha: c.fecha,
-        titulo: c.donante_display,
-        sub: c.concepto || (c.origen === 'jugador' ? 'Aportación voluntaria' : c.origen === 'patrocinador' ? 'Patrocinio' : 'Donación'),
-        monto: Number(c.monto),
-        origen: c.origen,
-        anonimo: c.anonimo
-      }))
-    ].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 5);
+    // Últimos movimientos — solo tesorero
+    if (state.isTesorero) {
+      const movements = [
+        ...recentExpenses.map(e => ({
+          tipo: 'egreso', fecha: e.fecha,
+          titulo: e.descripcion || e.categoria, sub: e.categoria,
+          monto: Number(e.monto)
+        })),
+        ...recentContribs.map(c => ({
+          tipo: 'ingreso', fecha: c.fecha,
+          titulo: c.donante_display,
+          sub: c.concepto || (c.origen === 'jugador' ? 'Aportación voluntaria' : c.origen === 'patrocinador' ? 'Patrocinio' : 'Donación'),
+          monto: Number(c.monto)
+        }))
+      ].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 5);
 
-    if (movements.length > 0) {
-      html += `<div class="section-title">Últimos movimientos</div><div class="list-card">`;
-      for (const m of movements) {
-        const fecha = new Date(m.fecha + 'T12:00:00');
-        const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
-        const isIngreso = m.tipo === 'ingreso';
-        const iconClass = isIngreso ? 'in' : 'out';
-        const arrow = isIngreso ? '↓' : '↑';
-        const valueClass = isIngreso ? 'pos' : 'neg';
-        const valueSign = isIngreso ? '+' : '−';
-        html += `
-          <div class="list-row">
-            <div class="list-row-icon ${iconClass}">${arrow}</div>
-            <div class="list-row-body">
-              <div class="list-row-title">${escapeHtml(m.titulo)}</div>
-              <div class="list-row-sub">${fechaTxt} · ${escapeHtml(m.sub)}</div>
-            </div>
-            <div class="list-row-value ${valueClass}">${valueSign}${formatMoney(m.monto)}</div>
-          </div>`;
+      if (movements.length > 0) {
+        html += `<div class="section-title">Últimos movimientos</div><div class="list-card">`;
+        for (const m of movements) {
+          const fecha = new Date(m.fecha + 'T12:00:00');
+          const fechaTxt = fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+          const isIngreso = m.tipo === 'ingreso';
+          html += `
+            <div class="list-row">
+              <div class="list-row-icon ${isIngreso ? 'in' : 'out'}">${isIngreso ? '↓' : '↑'}</div>
+              <div class="list-row-body">
+                <div class="list-row-title">${escapeHtml(m.titulo)}</div>
+                <div class="list-row-sub">${fechaTxt} · ${escapeHtml(m.sub)}</div>
+              </div>
+              <div class="list-row-value ${isIngreso ? 'pos' : 'neg'}">${isIngreso ? '+' : '−'}${formatMoney(m.monto)}</div>
+            </div>`;
+        }
+        html += `</div>`;
       }
-      html += `</div>`;
     }
 
     container.innerHTML = html;
@@ -608,7 +835,11 @@ async function loadTesoreria() {
           ◆ El excedente va al fondo de uniformes<br>
           ◆ Aportaciones voluntarias cubren deuda primero
         </div>
-      </div>`;
+      </div>
+
+      <button class="btn btn-secondary" style="width: 100%; margin-top: 14px;" onclick="showAccessPanel()">
+        🔐 Gestionar accesos del equipo
+      </button>`;
 
     container.innerHTML = html;
   } catch (err) {
@@ -3289,6 +3520,245 @@ async function uploadSinglePhoto(file, gameId) {
 }
 
 // ============================================================
+// PANEL DE ACCESOS (admin de cuentas de jugadores)
+// ============================================================
+async function showAccessPanel() {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>ACCESOS DEL EQUIPO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    // Traer jugadores activos + sus cuentas (si tienen)
+    const { data: players } = await db.from('players')
+      .select('*').eq('activo', true).order('numero');
+
+    const { data: accounts } = await db.from('player_accounts')
+      .select('*');
+
+    renderAccessPanel(players || [], accounts || []);
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+function renderAccessPanel(players, accounts) {
+  // Mapear jugador → cuenta
+  const accountByPlayer = {};
+  for (const a of accounts) accountByPlayer[a.player_id] = a;
+
+  let conCuentaActiva = 0;
+  let conCuentaInactiva = 0;
+  let sinCuenta = 0;
+
+  for (const p of players) {
+    const acc = accountByPlayer[p.id];
+    if (!acc) sinCuenta++;
+    else if (acc.activo) conCuentaActiva++;
+    else conCuentaInactiva++;
+  }
+
+  let playersHtml = '';
+  for (const p of players) {
+    const acc = accountByPlayer[p.id];
+    const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
+    const avatarText = p.foto_url ? '' : getInitials(p.nombre);
+
+    let rowClass, statusHtml, actionHtml;
+    if (!acc) {
+      rowClass = 'none';
+      statusHtml = `<span class="badge none">SIN CUENTA</span>`;
+      actionHtml = `<button class="access-btn primary" onclick="showCreateAccountForm('${p.id}')">+ Crear</button>`;
+    } else if (acc.activo) {
+      rowClass = 'active';
+      const lastLogin = acc.last_login
+        ? new Date(acc.last_login).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })
+        : 'nunca';
+      statusHtml = `
+        <span class="badge ok">ACTIVO</span>
+        <span>${escapeHtml(acc.email)}</span>
+        <span>Entró: ${lastLogin}</span>`;
+      actionHtml = `<button class="access-btn danger" onclick="confirmDeactivateAccount('${acc.id}', '${escapeHtml(p.nombre)}')">Dar de baja</button>`;
+    } else {
+      rowClass = 'pending';
+      statusHtml = `
+        <span class="badge pending">DESACTIVADA</span>
+        <span>${escapeHtml(acc.email)}</span>`;
+      actionHtml = `<button class="access-btn" onclick="reactivateAccount('${acc.id}')">Reactivar</button>`;
+    }
+
+    playersHtml += `
+      <div class="access-row ${rowClass}">
+        <div class="access-row-avatar" ${avatarStyle}>${avatarText}</div>
+        <div class="access-row-body">
+          <div class="access-row-name">${escapeHtml(p.apodo || p.nombre)}<span class="access-row-num">#${p.numero}</span></div>
+          <div class="access-row-status">${statusHtml}</div>
+        </div>
+        <div class="access-row-action">${actionHtml}</div>
+      </div>`;
+  }
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>ACCESOS DEL EQUIPO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="access-stats">
+        <div class="access-stat-card active">
+          <div class="access-stat-value">${conCuentaActiva}</div>
+          <div class="access-stat-label">Con acceso</div>
+        </div>
+        <div class="access-stat-card pending">
+          <div class="access-stat-value">${conCuentaInactiva}</div>
+          <div class="access-stat-label">Dados de baja</div>
+        </div>
+        <div class="access-stat-card none">
+          <div class="access-stat-value">${sinCuenta}</div>
+          <div class="access-stat-label">Sin cuenta</div>
+        </div>
+      </div>
+
+      <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 10px; text-align: center; line-height: 1.5;">
+        Total: ${players.length} jugadores activos<br>
+        Las cuentas se crean vía Supabase Dashboard (guía en el modal al crear)
+      </div>
+
+      ${playersHtml}
+    </div>`;
+}
+
+async function showCreateAccountForm(playerId) {
+  const { data: player } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
+  if (!player) return;
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>CREAR CUENTA</h2>
+      <button class="modal-close" onclick="showAccessPanel()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <div style="font-size: 42px;">⚾</div>
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 2px; margin-top: 8px;">
+          ${escapeHtml(player.apodo || player.nombre)} #${player.numero}
+        </div>
+      </div>
+
+      <div class="notes-box" style="font-style: normal; margin-bottom: 16px;">
+        <strong style="color: var(--gold);">📋 Paso a paso para crear la cuenta:</strong><br><br>
+        <strong>1.</strong> Abre Supabase en otra pestaña: <a href="https://supabase.com/dashboard" target="_blank" style="color: var(--gold); text-decoration: underline;">supabase.com/dashboard</a><br>
+        <strong>2.</strong> Ve a <em>Authentication → Users → Add user → Create new user</em><br>
+        <strong>3.</strong> Llena: email del jugador + password temporal + activa "Auto Confirm"<br>
+        <strong>4.</strong> Copia el UUID que se genera<br>
+        <strong>5.</strong> Vuelve aquí y pégalo en el formulario
+      </div>
+
+      <div id="createAccountError"></div>
+
+      <div class="form-group">
+        <label class="form-label">Email del jugador (el que usaste en Supabase)</label>
+        <input type="email" class="form-input" id="newAccountEmail" required autocapitalize="none" placeholder="pepe@gmail.com">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">UUID del usuario (desde Supabase)</label>
+        <input type="text" class="form-input" id="newAccountUUID" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="font-family: monospace; font-size: 12px;">
+        <div class="form-hint">Se ve así: aa0e8400-e29b-41d4-a716-446655440000</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="showAccessPanel()">Cancelar</button>
+      <button class="btn btn-primary" id="saveAccountBtn" onclick="createPlayerAccount('${playerId}')">Vincular cuenta</button>
+    </div>`;
+}
+
+async function createPlayerAccount(playerId) {
+  const email = document.getElementById('newAccountEmail').value.trim();
+  const userId = document.getElementById('newAccountUUID').value.trim();
+  const errorDiv = document.getElementById('createAccountError');
+  const saveBtn = document.getElementById('saveAccountBtn');
+
+  if (!email || !userId) {
+    errorDiv.innerHTML = '<div class="form-error">Completa ambos campos</div>';
+    return;
+  }
+
+  // Validar formato UUID básico
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+    errorDiv.innerHTML = '<div class="form-error">El UUID no tiene el formato correcto</div>';
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Vinculando...';
+
+  try {
+    const { error } = await db.from('player_accounts').insert({
+      player_id: playerId,
+      user_id: userId,
+      email: email,
+      activo: true
+    });
+    if (error) throw error;
+    showAccessPanel();
+  } catch (err) {
+    let msg = err.message;
+    if (msg.includes('duplicate')) msg = 'Este jugador o email ya tiene una cuenta vinculada';
+    if (msg.includes('violates foreign key')) msg = 'El UUID no corresponde a un usuario válido en Supabase Auth';
+    errorDiv.innerHTML = `<div class="form-error">${escapeHtml(msg)}</div>`;
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Vincular cuenta';
+  }
+}
+
+function confirmDeactivateAccount(accountId, playerName) {
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>DAR DE BAJA</h2>
+      <button class="modal-close" onclick="showAccessPanel()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 12px;">🚫</div>
+        <p style="color: var(--cream-2); line-height: 1.6;">
+          <strong style="color: var(--gold);">${escapeHtml(playerName)}</strong> ya no podrá entrar a la app.
+          <br><br>
+          Sus datos históricos (asistencia, cobros, fotos) se mantienen intactos.
+          <br><br>
+          ¿Confirmas?
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="showAccessPanel()">Cancelar</button>
+      <button class="btn btn-danger" onclick="deactivateAccount('${accountId}')">Dar de baja</button>
+    </div>`;
+}
+
+async function deactivateAccount(accountId) {
+  try {
+    const { error } = await db.from('player_accounts').update({ activo: false }).eq('id', accountId);
+    if (error) throw error;
+    showAccessPanel();
+  } catch (err) { alert('Error: ' + err.message); }
+}
+
+async function reactivateAccount(accountId) {
+  try {
+    const { error } = await db.from('player_accounts').update({ activo: true }).eq('id', accountId);
+    if (error) throw error;
+    showAccessPanel();
+  } catch (err) { alert('Error: ' + err.message); }
+}
+
+// ============================================================
 // PWA: Service Worker + Install Banner + Update detection
 // ============================================================
 let deferredInstallPrompt = null;
@@ -3449,7 +3919,15 @@ const loaders = {
 
 const loaded = { home: false, tesoreria: false, roster: false, calendario: false, galeria: false };
 
+const PUBLIC_SCREENS = ['home'];
+
 function showScreen(target) {
+  // Si es invitado y trata de entrar a pantalla privada → mostrar login
+  if (!state.isTesorero && !state.isPlayer && !PUBLIC_SCREENS.includes(target)) {
+    showLoginModal();
+    return;
+  }
+
   screens.forEach(s => s.classList.toggle('active', s.id === target));
   navItems.forEach(n => n.classList.toggle('active', n.dataset.screen === target));
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3519,6 +3997,13 @@ window.closePhotoUploadForm = closePhotoUploadForm;
 window.removePhotoFromQueue = removePhotoFromQueue;
 window.startPhotoUpload = startPhotoUpload;
 window.openGameLightbox = openGameLightbox;
+window.showAccessPanel = showAccessPanel;
+window.showCreateAccountForm = showCreateAccountForm;
+window.createPlayerAccount = createPlayerAccount;
+window.confirmDeactivateAccount = confirmDeactivateAccount;
+window.deactivateAccount = deactivateAccount;
+window.reactivateAccount = reactivateAccount;
+window.showLoginModal = showLoginModal;
 
 // INICIO
 (async () => {

@@ -13,16 +13,16 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="10">
+<meta name="app-version" content="12">
 
 <title>Tazos Dorados · Liga Veteranos 40+</title>
 <meta name="description" content="App oficial del equipo de béisbol Tazos Dorados 40+">
 
-<link rel="manifest" href="manifest.webmanifest?v=10">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=10">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=10">
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=10">
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=10">
+<link rel="manifest" href="manifest.webmanifest?v=12">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=12">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=12">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=12">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=12">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,8 +30,12 @@
 
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  input, textarea, select, [contenteditable] { user-select: text; -webkit-user-select: text; }
+  html, body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+  /* Re-habilitar selección para inputs */
+  input, textarea, select, [contenteditable] { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+  /* Garantizar que botones e interactivos reciban taps sin problemas */
+  button, a, .nav-item, .fab, [onclick], [role="button"] { touch-action: manipulation; -webkit-user-select: none; user-select: none; cursor: pointer; }
   :root {
     --navy: #0b1622; --navy-2: #142538; --navy-3: #1d3148;
     --cream: #f5ede0; --cream-2: #ebe0cc;
@@ -45,7 +49,7 @@
   body { background: var(--navy); background-image: radial-gradient(circle at 15% 8%, rgba(229, 185, 74, 0.12) 0%, transparent 45%), radial-gradient(circle at 90% 85%, rgba(200, 66, 66, 0.08) 0%, transparent 50%); background-attachment: fixed; }
   body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 1000; opacity: 0.04; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
   .app { max-width: 430px; margin: 0 auto; min-height: 100vh; background: var(--navy); position: relative; padding-bottom: 88px; }
-  .app-header { position: sticky; top: 0; z-index: 50; background: linear-gradient(180deg, var(--navy) 0%, var(--navy) 85%, rgba(11, 22, 34, 0.95) 100%); padding: 16px 20px 14px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
+  .app-header { position: sticky; top: 0; z-index: 50; background: linear-gradient(180deg, var(--navy) 0%, var(--navy) 85%, rgba(11, 22, 34, 0.95) 100%); padding: 16px 20px 14px; padding-top: calc(16px + env(safe-area-inset-top)); display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
   .team-badge { width: 54px; height: 54px; border-radius: 50%; background: var(--navy); border: 2px solid var(--gold); display: grid; place-items: center; flex-shrink: 0; position: relative; box-shadow: 0 0 0 2px var(--navy-2), 0 0 14px rgba(229, 185, 74, 0.25); }
   .team-badge-text { font-family: 'Kaushan Script', cursive; font-size: 16px; color: var(--cream); line-height: 0.9; text-align: center; transform: rotate(-4deg); letter-spacing: -0.5px; }
   .team-badge-text small { display: block; font-family: 'Allura', cursive; font-size: 11px; color: var(--gold); margin-top: -2px; }
@@ -555,6 +559,57 @@
     font-size: 20px; cursor: pointer; padding: 4px 8px; flex-shrink: 0;
   }
   .install-banner-close:active { opacity: 1; }
+  /* ========== PANEL DE ACCESOS (ADMIN) ========== */
+  .access-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .access-stat-card { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 8px; text-align: center; }
+  .access-stat-card.active { border-left: 3px solid var(--green); }
+  .access-stat-card.pending { border-left: 3px solid var(--gold); }
+  .access-stat-card.none { border-left: 3px solid var(--text-muted); }
+  .access-stat-value { font-family: 'Bebas Neue', sans-serif; font-size: 26px; line-height: 1; }
+  .access-stat-card.active .access-stat-value { color: var(--green); }
+  .access-stat-card.pending .access-stat-value { color: var(--gold); }
+  .access-stat-card.none .access-stat-value { color: var(--text-muted); }
+  .access-stat-label { font-size: 9px; color: var(--text-muted); letter-spacing: 1.5px; margin-top: 4px; text-transform: uppercase; }
+  .access-row { background: var(--navy-2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+  .access-row.active { border-left: 3px solid var(--green); }
+  .access-row.pending { border-left: 3px solid var(--gold); }
+  .access-row.none { border-left: 3px solid var(--text-muted); opacity: 0.8; }
+  .access-row-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--navy-3); border: 1px solid var(--gold-deep); display: grid; place-items: center; color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 15px; flex-shrink: 0; background-size: cover; background-position: center; overflow: hidden; }
+  .access-row-body { flex: 1; min-width: 0; }
+  .access-row-name { font-size: 14px; font-weight: 600; color: var(--cream); }
+  .access-row-num { color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 13px; margin-left: 6px; }
+  .access-row-status { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .access-row-status .badge { padding: 2px 6px; border-radius: 4px; font-size: 9px; letter-spacing: 1px; font-family: 'Bebas Neue', sans-serif; }
+  .access-row-status .badge.ok { background: rgba(107, 169, 107, 0.15); color: var(--green); }
+  .access-row-status .badge.pending { background: rgba(229, 185, 74, 0.15); color: var(--gold); }
+  .access-row-status .badge.none { background: rgba(138, 154, 170, 0.15); color: var(--text-muted); }
+  .access-row-action { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  .access-btn { background: var(--navy-3); border: 1px solid var(--line); color: var(--cream); padding: 6px 10px; border-radius: 6px; font-size: 10px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; cursor: pointer; }
+  .access-btn.primary { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 700; }
+  .access-btn.danger { background: rgba(200, 66, 66, 0.1); color: var(--red); border-color: var(--red-dark); }
+  .access-btn:active { transform: scale(0.95); }
+  /* Public gate (visitantes sin login) */
+  .public-gate { text-align: center; padding: 24px 12px; }
+  .public-gate-logo { width: 120px; height: 120px; margin: 0 auto 20px; background: linear-gradient(135deg, rgba(229, 185, 74, 0.15) 0%, var(--navy-2) 100%); border: 2px solid var(--gold-deep); border-radius: 50%; display: grid; place-items: center; }
+  .public-gate-logo img { width: 80%; height: 80%; border-radius: 50%; }
+  .public-gate-title { font-family: 'Kaushan Script', cursive; font-size: 32px; color: var(--gold); line-height: 1; margin-bottom: 4px; }
+  .public-gate-sub { font-family: 'Allura', cursive; font-size: 26px; color: var(--gold-dark); margin-bottom: 12px; }
+  .public-gate-league { font-size: 11px; color: var(--text-muted); letter-spacing: 2px; margin-bottom: 24px; }
+  .public-login-btn { background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%); color: var(--navy); border: none; padding: 14px 32px; border-radius: 14px; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; cursor: pointer; font-weight: 700; box-shadow: 0 4px 20px rgba(229, 185, 74, 0.4); margin: 0 auto 24px; display: inline-flex; align-items: center; gap: 8px; }
+  .public-login-btn:active { transform: scale(0.97); }
+  .public-hint { font-family: 'Caveat', cursive; font-size: 16px; color: var(--cream-2); opacity: 0.75; margin-bottom: 20px; }
+  /* Gate bottom nav: ocultar items privados cuando no está logueado */
+  body.guest-mode .nav-item[data-screen="tesoreria"],
+  body.guest-mode .nav-item[data-screen="roster"],
+  body.guest-mode .nav-item[data-screen="calendario"],
+  body.guest-mode .nav-item[data-screen="galeria"] { opacity: 0.4; }
+  body.guest-mode .nav-item[data-screen="tesoreria"]:active,
+  body.guest-mode .nav-item[data-screen="roster"]:active,
+  body.guest-mode .nav-item[data-screen="calendario"]:active,
+  body.guest-mode .nav-item[data-screen="galeria"]:active { opacity: 1; }
+  /* Indicador de usuario logueado en header */
+  .user-badge { font-size: 10px; color: var(--gold); opacity: 0.85; display: flex; align-items: center; gap: 4px; }
+  body.player-mode #header-subtitle::before { content: '⚾ '; }
 </style>
 </head>
 <body>
@@ -652,10 +707,10 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js?v=10"></script>
-<script src="app.js?v=10"></script>
+<script src="config.js?v=12"></script>
+<script src="app.js?v=12"></script>
 
-<div class="app-version">v10</div>
+<div class="app-version">v12</div>
 
 </body>
 </html>

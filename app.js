@@ -3627,7 +3627,7 @@ function renderAccessPanel(players, accounts) {
 
       <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 10px; text-align: center; line-height: 1.5;">
         Total: ${players.length} jugadores activos<br>
-        Las cuentas se crean vía Supabase Dashboard (guía en el modal al crear)
+        Toca <strong style="color: var(--gold);">+ CREAR</strong> para generar cuenta y mandar acceso por WhatsApp
       </div>
 
       ${playersHtml}
@@ -3814,7 +3814,7 @@ async function showCredentialsScreen(playerId, email, password) {
   const playerName = player.apodo || player.nombre.split(' ')[0];
   const appUrl = window.location.origin + window.location.pathname;
 
-  // Mensaje WhatsApp pre-escrito
+  // Mensaje WhatsApp pre-escrito (lo guardamos en variable global para evitar problemas de escape)
   const waMessage = `¡Hola ${playerName}! ⚾
 
 Ya tienes acceso a la app de los Tazos Dorados 🟡
@@ -3831,6 +3831,9 @@ Cuando entres, cambia el password por uno tuyo.
   • Android: te aparece un banner dorado "Instalar"
 
 ¡BIENVENIDO, TAZO! 👑`;
+
+  // Guardamos en variable global temporal — evita todos los problemas de escape
+  window._credsCache = { email, password, waMessage, playerName };
 
   modalContent.innerHTML = `
     <div class="modal-header">
@@ -3855,15 +3858,15 @@ Cuando entres, cambia el password por uno tuyo.
         <div style="font-family: monospace; font-size: 15px; color: var(--cream); font-weight: 700; letter-spacing: 1px;">${escapeHtml(password)}</div>
       </div>
 
-      <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px; background: #25D366; color: white; border-color: #25D366; font-size: 14px; padding: 14px;" onclick="shareViaWhatsApp(\`${waMessage.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+      <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px; background: #25D366; color: white; border-color: #25D366; font-size: 14px; padding: 14px;" onclick="shareViaWhatsApp()">
         📲 ENVIAR POR WHATSAPP
       </button>
 
-      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="copyCredentials('${email.replace(/'/g, "\\'")}', '${password.replace(/'/g, "\\'")}')">
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="copyCredentials()">
         📋 Copiar email y password
       </button>
 
-      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="copyFullMessage(\`${waMessage.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="copyFullMessage()">
         📝 Copiar mensaje completo
       </button>
 
@@ -3876,24 +3879,32 @@ Cuando entres, cambia el password por uno tuyo.
     </div>`;
 }
 
-function shareViaWhatsApp(message) {
-  // Abrir WhatsApp web/app con el mensaje pre-escrito
-  const encoded = encodeURIComponent(message);
+function shareViaWhatsApp() {
+  if (!window._credsCache) return;
+  const encoded = encodeURIComponent(window._credsCache.waMessage);
   const waUrl = `https://wa.me/?text=${encoded}`;
   window.open(waUrl, '_blank');
 }
 
-async function copyCredentials(email, password) {
+async function copyCredentials() {
+  if (!window._credsCache) return;
+  const { email, password } = window._credsCache;
   const text = `Email: ${email}\nPassword: ${password}`;
   try {
     await navigator.clipboard.writeText(text);
-    // Feedback visual rápido
+    // Feedback visual: cambiar texto del botón 1.5 seg
     const btns = document.querySelectorAll('.btn-secondary');
     for (const btn of btns) {
       if (btn.textContent.includes('Copiar email')) {
         const original = btn.innerHTML;
-        btn.innerHTML = '✅ Copiado';
-        setTimeout(() => { btn.innerHTML = original; }, 1500);
+        btn.innerHTML = '✅ COPIADO';
+        btn.style.background = 'rgba(107, 169, 107, 0.15)';
+        btn.style.color = 'var(--green)';
+        setTimeout(() => {
+          btn.innerHTML = original;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 1500);
         break;
       }
     }
@@ -3902,20 +3913,28 @@ async function copyCredentials(email, password) {
   }
 }
 
-async function copyFullMessage(message) {
+async function copyFullMessage() {
+  if (!window._credsCache) return;
+  const { waMessage } = window._credsCache;
   try {
-    await navigator.clipboard.writeText(message);
+    await navigator.clipboard.writeText(waMessage);
     const btns = document.querySelectorAll('.btn-secondary');
     for (const btn of btns) {
       if (btn.textContent.includes('Copiar mensaje')) {
         const original = btn.innerHTML;
-        btn.innerHTML = '✅ Copiado';
-        setTimeout(() => { btn.innerHTML = original; }, 1500);
+        btn.innerHTML = '✅ COPIADO';
+        btn.style.background = 'rgba(107, 169, 107, 0.15)';
+        btn.style.color = 'var(--green)';
+        setTimeout(() => {
+          btn.innerHTML = original;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 1500);
         break;
       }
     }
   } catch (err) {
-    alert(message);
+    alert(waMessage);
   }
 }
 

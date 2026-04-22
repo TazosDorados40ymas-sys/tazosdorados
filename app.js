@@ -3634,9 +3634,47 @@ function renderAccessPanel(players, accounts) {
     </div>`;
 }
 
+// ============================================================
+// HELPERS para creación de cuentas
+// ============================================================
+
+// Genera email automático tipo "06pepe@tazosdorados.app"
+function generateAutoEmail(player) {
+  const numero = String(player.numero).padStart(2, '0');
+  // Usa apodo si existe, si no primer nombre
+  let base = (player.apodo || player.nombre.split(' ')[0] || '').toLowerCase();
+  // Remover acentos y caracteres especiales
+  base = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Solo letras y números
+  base = base.replace(/[^a-z0-9]/g, '');
+  if (!base) base = 'tazo';
+  return `${numero}${base}@tazosdorados.app`;
+}
+
+// Genera password aleatorio fácil de leer (sin caracteres confusos)
+function generateTempPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const length = 10;
+  let password = '';
+  const crypto = window.crypto || window.msCrypto;
+  const randomValues = new Uint32Array(length);
+  crypto.getRandomValues(randomValues);
+  for (let i = 0; i < length; i++) {
+    password += chars[randomValues[i] % chars.length];
+  }
+  return password;
+}
+
+// ============================================================
+// CREAR CUENTA DE JUGADOR (desde el móvil)
+// ============================================================
+
 async function showCreateAccountForm(playerId) {
   const { data: player } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
   if (!player) return;
+
+  const autoEmail = generateAutoEmail(player);
+  const autoPassword = generateTempPassword();
 
   modalContent.innerHTML = `
     <div class="modal-header">
@@ -3649,72 +3687,235 @@ async function showCreateAccountForm(playerId) {
         <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 2px; margin-top: 8px;">
           ${escapeHtml(player.apodo || player.nombre)} #${player.numero}
         </div>
-      </div>
-
-      <div class="notes-box" style="font-style: normal; margin-bottom: 16px;">
-        <strong style="color: var(--gold);">📋 Paso a paso para crear la cuenta:</strong><br><br>
-        <strong>1.</strong> Abre Supabase en otra pestaña: <a href="https://supabase.com/dashboard" target="_blank" style="color: var(--gold); text-decoration: underline;">supabase.com/dashboard</a><br>
-        <strong>2.</strong> Ve a <em>Authentication → Users → Add user → Create new user</em><br>
-        <strong>3.</strong> Llena: email del jugador + password temporal + activa "Auto Confirm"<br>
-        <strong>4.</strong> Copia el UUID que se genera<br>
-        <strong>5.</strong> Vuelve aquí y pégalo en el formulario
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+          ${escapeHtml(player.nombre)}
+        </div>
       </div>
 
       <div id="createAccountError"></div>
 
       <div class="form-group">
-        <label class="form-label">Email del jugador (el que usaste en Supabase)</label>
-        <input type="email" class="form-input" id="newAccountEmail" required autocapitalize="none" placeholder="pepe@gmail.com">
+        <label class="form-label">Email del jugador</label>
+        <input type="email" class="form-input" id="newAccountEmail" value="${autoEmail}" autocapitalize="none" style="font-family: monospace; font-size: 13px;">
+        <div class="form-hint">Se genera automático. Si el jugador tiene email real, ponlo aquí.</div>
       </div>
 
       <div class="form-group">
-        <label class="form-label">UUID del usuario (desde Supabase)</label>
-        <input type="text" class="form-input" id="newAccountUUID" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="font-family: monospace; font-size: 12px;">
-        <div class="form-hint">Se ve así: aa0e8400-e29b-41d4-a716-446655440000</div>
+        <label class="form-label">Password temporal</label>
+        <input type="text" class="form-input" id="newAccountPassword" value="${autoPassword}" autocapitalize="none" style="font-family: monospace; font-size: 14px; letter-spacing: 1px;">
+        <div class="form-hint">Se genera automático. El jugador podrá cambiarlo.</div>
+      </div>
+
+      <div class="notes-box" style="font-style: normal; font-size: 11px; margin-top: 10px;">
+        ⚡ Al crear: la cuenta queda lista y podrás mandársela al jugador por WhatsApp en el siguiente paso.
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="showAccessPanel()">Cancelar</button>
-      <button class="btn btn-primary" id="saveAccountBtn" onclick="createPlayerAccount('${playerId}')">Vincular cuenta</button>
+      <button class="btn btn-primary" id="saveAccountBtn" onclick="createPlayerAccount('${playerId}')">Crear cuenta</button>
     </div>`;
 }
 
 async function createPlayerAccount(playerId) {
   const email = document.getElementById('newAccountEmail').value.trim();
-  const userId = document.getElementById('newAccountUUID').value.trim();
+  const password = document.getElementById('newAccountPassword').value.trim();
   const errorDiv = document.getElementById('createAccountError');
   const saveBtn = document.getElementById('saveAccountBtn');
 
-  if (!email || !userId) {
+  if (!email || !password) {
     errorDiv.innerHTML = '<div class="form-error">Completa ambos campos</div>';
     return;
   }
 
-  // Validar formato UUID básico
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
-    errorDiv.innerHTML = '<div class="form-error">El UUID no tiene el formato correcto</div>';
+  if (password.length < 6) {
+    errorDiv.innerHTML = '<div class="form-error">Password muy corto (mínimo 6 caracteres)</div>';
     return;
   }
 
   saveBtn.disabled = true;
-  saveBtn.textContent = 'Vinculando...';
+  saveBtn.textContent = 'Creando...';
+  errorDiv.innerHTML = '';
+
+  // Guardamos el state del tesorero actual
+  const tesoreroSession = await db.auth.getSession();
 
   try {
-    const { error } = await db.from('player_accounts').insert({
+    // PASO 1: Crear usuario en Auth
+    // Nota: signUp logea automáticamente al nuevo usuario,
+    // lo cual nos desloguea a nosotros. Lo revertimos al final.
+    const { data: authData, error: authError } = await db.auth.signUp({
+      email: email,
+      password: password,
+      options: {
+        // No redirigir tras email confirmation (ya la desactivamos en Supabase)
+        emailRedirectTo: undefined
+      }
+    });
+
+    if (authError) throw authError;
+    if (!authData.user) throw new Error('No se pudo crear el usuario');
+
+    const newUserId = authData.user.id;
+
+    // PASO 2: Re-loguearnos como tesorero (el signUp nos desloggeó)
+    if (tesoreroSession.data.session) {
+      // Restaurar sesión del tesorero
+      await db.auth.setSession({
+        access_token: tesoreroSession.data.session.access_token,
+        refresh_token: tesoreroSession.data.session.refresh_token
+      });
+    }
+
+    // PASO 3: Vincular usuario con jugador en player_accounts
+    const { error: linkError } = await db.from('player_accounts').insert({
       player_id: playerId,
-      user_id: userId,
+      user_id: newUserId,
       email: email,
       activo: true
     });
-    if (error) throw error;
-    showAccessPanel();
+
+    if (linkError) {
+      // Si falla la vinculación, el usuario queda huérfano
+      // pero guardamos las credenciales para que el tesorero sepa
+      throw new Error(`Usuario creado pero no se vinculó: ${linkError.message}. Email: ${email}`);
+    }
+
+    // ÉXITO: mostrar pantalla de credenciales + WhatsApp
+    showCredentialsScreen(playerId, email, password);
   } catch (err) {
     let msg = err.message;
-    if (msg.includes('duplicate')) msg = 'Este jugador o email ya tiene una cuenta vinculada';
-    if (msg.includes('violates foreign key')) msg = 'El UUID no corresponde a un usuario válido en Supabase Auth';
+    if (msg.includes('already registered') || msg.includes('already been registered')) {
+      msg = 'Este email ya está registrado. Prueba con otro.';
+    }
+    if (msg.includes('Password should be')) {
+      msg = 'El password debe tener al menos 6 caracteres.';
+    }
+    if (msg.includes('invalid email') || msg.includes('Invalid email')) {
+      msg = 'El email no es válido. Prueba con otro dominio (ej. @gmail.com).';
+    }
     errorDiv.innerHTML = `<div class="form-error">${escapeHtml(msg)}</div>`;
     saveBtn.disabled = false;
-    saveBtn.textContent = 'Vincular cuenta';
+    saveBtn.textContent = 'Crear cuenta';
+
+    // Restaurar sesión del tesorero por si se perdió
+    if (tesoreroSession.data.session) {
+      await db.auth.setSession({
+        access_token: tesoreroSession.data.session.access_token,
+        refresh_token: tesoreroSession.data.session.refresh_token
+      }).catch(() => {});
+    }
+  }
+}
+
+async function showCredentialsScreen(playerId, email, password) {
+  const { data: player } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
+  if (!player) return;
+
+  const playerName = player.apodo || player.nombre.split(' ')[0];
+  const appUrl = window.location.origin + window.location.pathname;
+
+  // Mensaje WhatsApp pre-escrito
+  const waMessage = `¡Hola ${playerName}! ⚾
+
+Ya tienes acceso a la app de los Tazos Dorados 🟡
+
+🔗 Link: ${appUrl}
+
+📧 Email: ${email}
+🔑 Password: ${password}
+
+Cuando entres, cambia el password por uno tuyo.
+
+💡 Instala la app en tu celular:
+  • iPhone: toca "Compartir" y "Añadir a inicio"
+  • Android: te aparece un banner dorado "Instalar"
+
+¡BIENVENIDO, TAZO! 👑`;
+
+  modalContent.innerHTML = `
+    <div class="modal-header">
+      <h2>✅ CUENTA CREADA</h2>
+      <button class="modal-close" onclick="showAccessPanel()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align: center; margin-bottom: 18px;">
+        <div style="font-size: 48px; margin-bottom: 8px;">🎉</div>
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); letter-spacing: 2px;">
+          ¡BIENVENIDO ${escapeHtml(playerName).toUpperCase()}!
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          La cuenta quedó lista. Comparte estas credenciales:
+        </div>
+      </div>
+
+      <div style="background: var(--navy-2); border: 1px solid var(--gold-deep); border-radius: 12px; padding: 14px; margin-bottom: 14px;">
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--gold); margin-bottom: 6px;">📧 EMAIL</div>
+        <div style="font-family: monospace; font-size: 13px; color: var(--cream); word-break: break-all; margin-bottom: 12px;">${escapeHtml(email)}</div>
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--gold); margin-bottom: 6px;">🔑 PASSWORD TEMPORAL</div>
+        <div style="font-family: monospace; font-size: 15px; color: var(--cream); font-weight: 700; letter-spacing: 1px;">${escapeHtml(password)}</div>
+      </div>
+
+      <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px; background: #25D366; color: white; border-color: #25D366; font-size: 14px; padding: 14px;" onclick="shareViaWhatsApp(\`${waMessage.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+        📲 ENVIAR POR WHATSAPP
+      </button>
+
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="copyCredentials('${email.replace(/'/g, "\\'")}', '${password.replace(/'/g, "\\'")}')">
+        📋 Copiar email y password
+      </button>
+
+      <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="copyFullMessage(\`${waMessage.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+        📝 Copiar mensaje completo
+      </button>
+
+      <div class="notes-box" style="font-style: normal; font-size: 11px;">
+        💡 <strong>Importante:</strong> Guarda estas credenciales. No podrás ver el password otra vez por seguridad. Si se pierde, le creas cuenta nueva al jugador.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" style="width: 100%;" onclick="showAccessPanel()">Volver al panel</button>
+    </div>`;
+}
+
+function shareViaWhatsApp(message) {
+  // Abrir WhatsApp web/app con el mensaje pre-escrito
+  const encoded = encodeURIComponent(message);
+  const waUrl = `https://wa.me/?text=${encoded}`;
+  window.open(waUrl, '_blank');
+}
+
+async function copyCredentials(email, password) {
+  const text = `Email: ${email}\nPassword: ${password}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    // Feedback visual rápido
+    const btns = document.querySelectorAll('.btn-secondary');
+    for (const btn of btns) {
+      if (btn.textContent.includes('Copiar email')) {
+        const original = btn.innerHTML;
+        btn.innerHTML = '✅ Copiado';
+        setTimeout(() => { btn.innerHTML = original; }, 1500);
+        break;
+      }
+    }
+  } catch (err) {
+    alert('Credenciales:\n\n' + text);
+  }
+}
+
+async function copyFullMessage(message) {
+  try {
+    await navigator.clipboard.writeText(message);
+    const btns = document.querySelectorAll('.btn-secondary');
+    for (const btn of btns) {
+      if (btn.textContent.includes('Copiar mensaje')) {
+        const original = btn.innerHTML;
+        btn.innerHTML = '✅ Copiado';
+        setTimeout(() => { btn.innerHTML = original; }, 1500);
+        break;
+      }
+    }
+  } catch (err) {
+    alert(message);
   }
 }
 
@@ -4000,6 +4201,10 @@ window.openGameLightbox = openGameLightbox;
 window.showAccessPanel = showAccessPanel;
 window.showCreateAccountForm = showCreateAccountForm;
 window.createPlayerAccount = createPlayerAccount;
+window.showCredentialsScreen = showCredentialsScreen;
+window.shareViaWhatsApp = shareViaWhatsApp;
+window.copyCredentials = copyCredentials;
+window.copyFullMessage = copyFullMessage;
 window.confirmDeactivateAccount = confirmDeactivateAccount;
 window.deactivateAccount = deactivateAccount;
 window.reactivateAccount = reactivateAccount;

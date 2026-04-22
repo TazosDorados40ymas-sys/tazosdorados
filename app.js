@@ -1356,7 +1356,7 @@ async function showGameDetail(gameId) {
   try {
     const [gameRes, attRes, expRes, photosRes] = await Promise.all([
       db.from('games').select('*').eq('id', gameId).maybeSingle(),
-      db.from('attendance').select('estado, aportacion, pagado').eq('game_id', gameId),
+      db.from('attendance').select('estado, aportacion, aportacion_pagada, pagado').eq('game_id', gameId),
       db.from('expenses').select('*').eq('game_id', gameId).order('fecha', { ascending: false }),
       db.from('photos').select('*').eq('game_id', gameId).order('created_at', { ascending: false })
     ]);
@@ -1453,8 +1453,8 @@ function renderGameDetail(g, attendanceRecords, expensesRecords, photosRecords) 
       const avisaron = attendanceRecords.filter(a => a.estado === 'no_asistio').length;
       const pendientes = attendanceRecords.filter(a => a.estado === 'pendiente').length;
       const totalAport = attendanceRecords.reduce((s, a) => s + Number(a.aportacion || 0), 0);
-      const cobrado = attendanceRecords.filter(a => a.pagado).reduce((s, a) => s + Number(a.aportacion || 0), 0);
-      const porCobrar = totalAport - cobrado;
+      const cobrado = attendanceRecords.reduce((s, a) => s + Number(a.aportacion_pagada || 0), 0);
+      const porCobrar = Math.max(0, totalAport - cobrado);
 
       attendanceMini = `
         <div class="attendance-mini-summary">
@@ -1510,6 +1510,13 @@ function renderGameDetail(g, attendanceRecords, expensesRecords, photosRecords) 
   const gastos = expensesRecords || [];
   const totalGastosJuego = gastos.reduce((s, e) => s + Number(e.monto || 0), 0);
 
+  // ¿Ya hay ampayeo registrado en este juego?
+  const yaHayAmpayeo = gastos.some(e => 
+    (e.descripcion || '').toLowerCase().match(/ampay|umpir/)
+  );
+  // Solo mostramos el botón quick si es tesorero, el juego ya se jugó y aún no hay ampayeo
+  const mostrarAmpayeoQuick = state.isTesorero && g.status === 'jugado' && !yaHayAmpayeo;
+
   if (gastos.length > 0) {
     let items = '';
     for (const e of gastos) {
@@ -1528,12 +1535,20 @@ function renderGameDetail(g, attendanceRecords, expensesRecords, photosRecords) 
         </div>
         ${items}
         ${state.isTesorero ? `
-          <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px; padding: 8px;" onclick="showExpenseForm(null, '${g.id}')">
+          ${mostrarAmpayeoQuick ? `
+            <button class="btn btn-primary" style="width: 100%; margin-top: 10px; font-size: 13px; padding: 10px; background: var(--gold-dark); border-color: var(--gold-dark);" onclick="quickAddAmpayeo('${g.id}')">
+              ⚾ REGISTRAR AMPAYEO
+            </button>` : ''}
+          <button class="btn btn-secondary" style="width: 100%; margin-top: 8px; font-size: 12px; padding: 8px;" onclick="showExpenseForm(null, '${g.id}')">
             + Agregar otro gasto
           </button>` : ''}
       </div>`;
   } else if (state.isTesorero) {
     expensesSection = `
+      ${mostrarAmpayeoQuick ? `
+        <button class="btn btn-primary" style="width: 100%; margin-bottom: 10px; background: var(--gold-dark); border-color: var(--gold-dark); padding: 12px;" onclick="quickAddAmpayeo('${g.id}')">
+          ⚾ REGISTRAR AMPAYEO
+        </button>` : ''}
       <button class="btn btn-secondary" style="width: 100%; margin-bottom: 14px;" onclick="showExpenseForm(null, '${g.id}')">
         💸 Agregar gasto a este juego
       </button>`;
@@ -2031,13 +2046,18 @@ async function showAttendance(gameId) {
 
     const allPlayers = [...activePlayers, ...extraPlayers];
 
-    // Inicializar estado
+    // Inicializar estado con pagos parciales
     attendanceState = {};
     for (const p of allPlayers) {
       const existing = existingAtt.find(a => a.player_id === p.id);
-      attendanceState[p.id] = existing
-        ? { estado: existing.estado, pagado: !!existing.pagado }
-        : { estado: 'pendiente', pagado: false };
+      if (existing) {
+        attendanceState[p.id] = {
+          estado: existing.estado,
+          aportacion_pagada: Number(existing.aportacion_pagada || 0)
+        };
+      } else {
+        attendanceState[p.id] = { estado: 'pendiente', aportacion_pagada: 0 };
+      }
     }
 
     attendancePlayersCache = allPlayers;
@@ -2090,21 +2110,45 @@ function renderAttendanceScreen() {
 }
 
 function renderAttendancePlayerRow(p) {
-  const st = attendanceState[p.id] || { estado: 'pendiente', pagado: false };
+  const st = attendanceState[p.id] || { estado: 'pendiente', aportacion_pagada: 0 };
   const avatarStyle = p.foto_url ? `style="background-image: url('${escapeHtml(p.foto_url)}');"` : '';
   const avatarText = p.foto_url ? '' : getInitials(p.nombre);
-  const aportacion = getAportacion(st.estado);
+  const aportacionTeorica = getAportacion(st.estado);
+  const pagado = Number(st.aportacion_pagada || 0);
+  const falta = Math.max(0, aportacionTeorica - pagado);
 
   const jugoActive = st.estado === 'jugo' ? 'active-jugo' : '';
   const avisoActive = st.estado === 'no_asistio' ? 'active-aviso' : '';
   const pendActive = st.estado === 'pendiente' ? 'active-pend' : '';
 
   const showPay = st.estado !== 'pendiente';
-  const paidClass = st.pagado ? 'paid' : '';
 
-  const amountText = aportacion > 0
-    ? `Aporta: <strong>${formatMoney(aportacion)}</strong>`
-    : '<span style="opacity: 0.6;">Sin aportación aún</span>';
+  // Determinar estado del botón de pago:
+  // 0 pagado → "⏳ DEBE $X" (rojo/gris)
+  // pagó algo pero < total → "💵 $X/$Y" (amarillo, parcial)
+  // pagó >= total → "💰 PAGÓ $X" (verde, completo)
+  let payBtnClass, payBtnText;
+  if (pagado === 0) {
+    payBtnClass = '';
+    payBtnText = `⏳ DEBE ${formatMoney(aportacionTeorica)}`;
+  } else if (pagado < aportacionTeorica) {
+    payBtnClass = 'partial';
+    payBtnText = `💵 ${formatMoney(pagado)}/${formatMoney(aportacionTeorica)}`;
+  } else {
+    payBtnClass = 'paid';
+    payBtnText = `💰 PAGÓ ${formatMoney(pagado)}`;
+  }
+
+  let amountText;
+  if (aportacionTeorica === 0) {
+    amountText = '<span style="opacity: 0.6;">Sin aportación aún</span>';
+  } else if (pagado === 0) {
+    amountText = `Aporta: <strong>${formatMoney(aportacionTeorica)}</strong>`;
+  } else if (pagado < aportacionTeorica) {
+    amountText = `Pagó: <strong>${formatMoney(pagado)}</strong> · Falta: <strong style="color: var(--orange);">${formatMoney(falta)}</strong>`;
+  } else {
+    amountText = `Pagó: <strong style="color: var(--green);">${formatMoney(pagado)}</strong> ✓`;
+  }
 
   return `
     <div class="att-player-row ${st.estado}" id="attRow-${p.id}">
@@ -2116,8 +2160,8 @@ function renderAttendancePlayerRow(p) {
         </div>
         ${showPay ? `
           <div class="att-player-pay">
-            <button class="att-pay-toggle ${paidClass}" onclick="togglePagado('${p.id}')">
-              ${st.pagado ? '💰 PAGÓ' : '⏳ DEBE'}
+            <button class="att-pay-toggle ${payBtnClass}" onclick="showPaymentModal('${p.id}')">
+              ${payBtnText}
             </button>
           </div>` : ''}
       </div>
@@ -2131,15 +2175,14 @@ function renderAttendancePlayerRow(p) {
 
 function setAttendanceEstado(playerId, estado) {
   if (!attendanceState[playerId]) {
-    attendanceState[playerId] = { estado, pagado: false };
+    attendanceState[playerId] = { estado, aportacion_pagada: 0 };
   } else {
     attendanceState[playerId].estado = estado;
-    // Si pasa a pendiente, resetear pagado
-    if (estado === 'pendiente') attendanceState[playerId].pagado = false;
+    // Si pasa a pendiente, resetear pago
+    if (estado === 'pendiente') attendanceState[playerId].aportacion_pagada = 0;
   }
   attendanceDirty = true;
 
-  // Re-render solo esa fila
   const p = attendancePlayersCache.find(pl => pl.id === playerId);
   if (p) {
     const row = document.getElementById(`attRow-${playerId}`);
@@ -2148,11 +2191,88 @@ function setAttendanceEstado(playerId, estado) {
   updateAttendanceStats();
 }
 
-function togglePagado(playerId) {
+// NUEVO: Modal para registrar pago (completo / parcial / nada)
+function showPaymentModal(playerId) {
+  const p = attendancePlayersCache.find(pl => pl.id === playerId);
   const st = attendanceState[playerId];
-  if (!st || st.estado === 'pendiente') return;
+  if (!p || !st || st.estado === 'pendiente') return;
 
-  st.pagado = !st.pagado;
+  const aportacionTeorica = getAportacion(st.estado);
+  const pagado = Number(st.aportacion_pagada || 0);
+
+  // Usamos un mini-overlay encima del modal principal (no cerramos asistencia)
+  const existingOverlay = document.getElementById('paymentOverlay');
+  if (existingOverlay) existingOverlay.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'paymentOverlay';
+  overlay.className = 'modal-backdrop show';
+  overlay.style.zIndex = '250';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width: 380px;">
+      <div class="modal-header">
+        <h2>REGISTRAR PAGO</h2>
+        <button class="modal-close" onclick="closePaymentModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="text-align: center; margin-bottom: 14px;">
+          <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 2px;">
+            ${escapeHtml(p.apodo || p.nombre)} #${p.numero}
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+            Cuota del juego: <strong style="color: var(--cream);">${formatMoney(aportacionTeorica)}</strong>
+          </div>
+        </div>
+
+        <!-- Opción 1: pagó completo -->
+        <button class="btn btn-primary" style="width: 100%; margin-bottom: 10px; background: var(--green); color: white; border-color: var(--green); font-size: 14px; padding: 14px;" onclick="setPayment('${playerId}', ${aportacionTeorica})">
+          💰 PAGÓ COMPLETO (${formatMoney(aportacionTeorica)})
+        </button>
+
+        <!-- Opción 2: pagó parcial -->
+        <div style="background: var(--navy-2); border: 1px solid var(--gold-deep); border-radius: 10px; padding: 12px; margin-bottom: 10px;">
+          <div style="font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--gold); margin-bottom: 6px;">💵 PAGÓ PARCIAL</div>
+          <div style="display: flex; gap: 8px; align-items: stretch;">
+            <div style="position: relative; flex: 1;">
+              <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--gold); font-family: monospace; font-size: 14px;">$</span>
+              <input type="number" id="partialPaymentInput" min="1" max="${aportacionTeorica - 1}" step="1" inputmode="numeric" placeholder="70" value="${pagado > 0 && pagado < aportacionTeorica ? pagado : ''}" class="form-input" style="padding-left: 22px; font-family: monospace; font-size: 16px; font-weight: 700;">
+            </div>
+            <button class="btn btn-primary" style="padding: 0 16px; font-size: 12px;" onclick="applyPartialPayment('${playerId}', ${aportacionTeorica})">OK</button>
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">
+            Máximo ${formatMoney(aportacionTeorica - 1)} (si es más, mejor "COMPLETO")
+          </div>
+        </div>
+
+        <!-- Opción 3: nada pagado -->
+        <button class="btn btn-secondary" style="width: 100%;" onclick="setPayment('${playerId}', 0)">
+          ⏳ NADA PAGADO AÚN
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closePaymentModal();
+  });
+
+  // Auto-focus en input si hay pago parcial previo
+  setTimeout(() => {
+    const input = document.getElementById('partialPaymentInput');
+    if (input) input.focus();
+  }, 100);
+}
+
+function closePaymentModal() {
+  const overlay = document.getElementById('paymentOverlay');
+  if (overlay) overlay.remove();
+}
+
+function setPayment(playerId, amount) {
+  const st = attendanceState[playerId];
+  if (!st) return;
+  st.aportacion_pagada = Number(amount) || 0;
   attendanceDirty = true;
 
   const p = attendancePlayersCache.find(pl => pl.id === playerId);
@@ -2161,6 +2281,23 @@ function togglePagado(playerId) {
     if (row) row.outerHTML = renderAttendancePlayerRow(p);
   }
   updateAttendanceStats();
+  closePaymentModal();
+}
+
+function applyPartialPayment(playerId, maxAmount) {
+  const input = document.getElementById('partialPaymentInput');
+  if (!input) return;
+  const amount = parseFloat(input.value);
+  if (isNaN(amount) || amount <= 0) {
+    alert('Ingresa un monto válido mayor a 0');
+    return;
+  }
+  if (amount >= maxAmount) {
+    // Si puso el total o más, tratarlo como pago completo
+    setPayment(playerId, maxAmount);
+    return;
+  }
+  setPayment(playerId, amount);
 }
 
 function updateAttendanceStats() {
@@ -2170,8 +2307,8 @@ function updateAttendanceStats() {
   const pendientes = states.filter(s => s.estado === 'pendiente').length;
 
   const total = states.reduce((sum, s) => sum + getAportacion(s.estado), 0);
-  const cobrado = states.filter(s => s.pagado).reduce((sum, s) => sum + getAportacion(s.estado), 0);
-  const porCobrar = total - cobrado;
+  const cobrado = states.reduce((sum, s) => sum + Number(s.aportacion_pagada || 0), 0);
+  const porCobrar = Math.max(0, total - cobrado);
 
   const statGrid = document.getElementById('attStatGrid');
   if (statGrid) {
@@ -2204,14 +2341,14 @@ function updateAttendanceStats() {
 
 function bulkAttendanceAction(action) {
   for (const p of attendancePlayersCache) {
-    if (!attendanceState[p.id]) attendanceState[p.id] = { estado: 'pendiente', pagado: false };
+    if (!attendanceState[p.id]) attendanceState[p.id] = { estado: 'pendiente', aportacion_pagada: 0 };
     if (action === 'jugaron') {
       attendanceState[p.id].estado = 'jugo';
     } else if (action === 'avisaron') {
       attendanceState[p.id].estado = 'no_asistio';
     } else if (action === 'limpiar') {
       attendanceState[p.id].estado = 'pendiente';
-      attendanceState[p.id].pagado = false;
+      attendanceState[p.id].aportacion_pagada = 0;
     }
   }
   attendanceDirty = true;
@@ -2230,13 +2367,19 @@ async function saveAttendance() {
   saveBtn.textContent = 'Guardando...';
 
   try {
-    const rows = Object.entries(attendanceState).map(([playerId, s]) => ({
-      game_id: gameId,
-      player_id: playerId,
-      estado: s.estado,
-      aportacion: getAportacion(s.estado),
-      pagado: s.pagado
-    }));
+    const rows = Object.entries(attendanceState).map(([playerId, s]) => {
+      const aportacionTeorica = getAportacion(s.estado);
+      const aportacionPagada = Number(s.aportacion_pagada || 0);
+      return {
+        game_id: gameId,
+        player_id: playerId,
+        estado: s.estado,
+        aportacion: aportacionTeorica,
+        aportacion_pagada: aportacionPagada,
+        // Campo legacy: true si pagó completo, para compatibilidad
+        pagado: aportacionPagada >= aportacionTeorica && aportacionTeorica > 0
+      };
+    });
 
     const { error } = await db.from('attendance').upsert(rows, { onConflict: 'game_id,player_id' });
     if (error) throw error;
@@ -2244,13 +2387,11 @@ async function saveAttendance() {
     attendanceDirty = false;
     closeModal();
 
-    // Refrescar pantallas que muestran datos de aportaciones
     loaded.home = false;
     loaded.tesoreria = false;
     if (state.currentScreen === 'tesoreria') await loadTesoreria();
     else if (state.currentScreen === 'home') await loadHome();
 
-    // Volver al detalle del juego para ver el resumen actualizado
     setTimeout(() => showGameDetail(gameId), 150);
   } catch (err) {
     alert('Error al guardar: ' + err.message);
@@ -2845,6 +2986,132 @@ async function showExpenseForm(expenseId, prefillGameId) {
     .limit(30);
 
   renderExpenseForm(expense, games || []);
+}
+
+// ============================================================
+// AMPAYEO RÁPIDO — registra el gasto en 1 tap con confirmación
+// ============================================================
+async function quickAddAmpayeo(gameId) {
+  if (!state.isTesorero) { showLoginModal(); return; }
+
+  openModal(`
+    <div class="modal-header">
+      <h2>⚾ AMPAYEO</h2>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body"><div class="loading"><div class="spinner"></div></div></div>`);
+
+  try {
+    // Buscar el último ampayeo registrado para sugerir el mismo monto
+    const { data: lastAmpayeo } = await db.from('expenses')
+      .select('monto, descripcion')
+      .or('descripcion.ilike.%ampay%,descripcion.ilike.%umpir%')
+      .order('fecha', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const suggestedAmount = lastAmpayeo?.monto || 250;
+    const lastLabel = lastAmpayeo?.monto 
+      ? `Último ampayeo cobrado: <strong style="color: var(--gold);">${formatMoney(lastAmpayeo.monto)}</strong>`
+      : `Cantidad sugerida (puedes cambiarla)`;
+
+    // Obtener datos del juego para mostrar contexto
+    const { data: game } = await db.from('games').select('fecha, rival').eq('id', gameId).maybeSingle();
+    const gameLabel = game 
+      ? `${formatDateLong(game.fecha)} · vs ${escapeHtml(game.rival || 'rival')}`
+      : '';
+
+    modalContent.innerHTML = `
+      <div class="modal-header">
+        <h2>⚾ AMPAYEO</h2>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="text-align: center; margin-bottom: 18px;">
+          <div style="font-size: 42px;">⚾</div>
+          <div style="font-family: 'Bebas Neue', sans-serif; font-size: 14px; color: var(--gold); letter-spacing: 2px; margin-top: 6px;">
+            GASTO DE AMPAYEO
+          </div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            ${gameLabel}
+          </div>
+        </div>
+
+        <div style="background: var(--navy-2); border: 1px solid var(--gold-deep); border-radius: 10px; padding: 14px; margin-bottom: 14px; text-align: center;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">${lastLabel}</div>
+          <div style="display: flex; align-items: stretch; gap: 8px; justify-content: center;">
+            <span style="font-family: 'Bebas Neue', sans-serif; font-size: 32px; color: var(--gold); line-height: 1;">$</span>
+            <input type="number" id="ampayeoAmount" value="${suggestedAmount}" min="1" step="1" inputmode="numeric" 
+              style="background: var(--navy); border: 2px solid var(--gold); color: var(--cream); font-family: 'Bebas Neue', sans-serif; font-size: 32px; padding: 6px 12px; border-radius: 8px; width: 140px; text-align: center; letter-spacing: 1px;">
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 8px;">
+            Edita el monto si fue distinto
+          </div>
+        </div>
+
+        <div class="notes-box" style="font-style: normal; font-size: 11px;">
+          ⚡ Al confirmar, se agrega como gasto del juego con categoría <strong style="color: var(--gold);">"otros"</strong> y descripción <strong style="color: var(--gold);">"Ampayeo"</strong>.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="saveAmpayeoBtn" onclick="saveAmpayeo('${gameId}')">⚾ Registrar ampayeo</button>
+      </div>`;
+
+    // Auto-focus en el input (con pequeño delay por animación del modal)
+    setTimeout(() => {
+      const input = document.getElementById('ampayeoAmount');
+      if (input) { input.focus(); input.select(); }
+    }, 150);
+  } catch (err) {
+    modalContent.innerHTML = `
+      <div class="modal-header"><h2>ERROR</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+      <div class="modal-body">${errorBox('No se pudo cargar.', err.message)}</div>`;
+  }
+}
+
+async function saveAmpayeo(gameId) {
+  const input = document.getElementById('ampayeoAmount');
+  const saveBtn = document.getElementById('saveAmpayeoBtn');
+  const monto = parseFloat(input?.value || '0');
+
+  if (!monto || monto <= 0) {
+    alert('Ingresa un monto válido mayor a 0');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+
+  try {
+    // Obtener fecha del juego para asignar la misma fecha al gasto
+    const { data: game } = await db.from('games').select('fecha').eq('id', gameId).maybeSingle();
+    const fecha = game?.fecha || new Date().toISOString().substring(0, 10);
+
+    const { error } = await db.from('expenses').insert({
+      game_id: gameId,
+      categoria: 'otros',
+      descripcion: 'Ampayeo',
+      monto: monto,
+      fecha: fecha
+    });
+
+    if (error) throw error;
+
+    closeModal();
+
+    // Refrescar pantallas relevantes
+    loaded.home = false;
+    loaded.tesoreria = false;
+    if (state.currentScreen === 'tesoreria') await loadTesoreria();
+    else if (state.currentScreen === 'home') await loadHome();
+
+    setTimeout(() => showGameDetail(gameId), 150);
+  } catch (err) {
+    alert('Error al guardar: ' + err.message);
+    saveBtn.disabled = false;
+    saveBtn.textContent = '⚾ Registrar ampayeo';
+  }
 }
 
 function renderExpenseForm(e, recentGames) {
@@ -4198,7 +4465,10 @@ window.reactivatePlayer = reactivatePlayer;
 window.showAttendance = showAttendance;
 window.renderAttendanceScreen = renderAttendanceScreen;
 window.setAttendanceEstado = setAttendanceEstado;
-window.togglePagado = togglePagado;
+window.showPaymentModal = showPaymentModal;
+window.closePaymentModal = closePaymentModal;
+window.setPayment = setPayment;
+window.applyPartialPayment = applyPartialPayment;
 window.bulkAttendanceAction = bulkAttendanceAction;
 window.saveAttendance = saveAttendance;
 window.confirmCloseAttendance = confirmCloseAttendance;
@@ -4210,6 +4480,8 @@ window.showExpenseList = showExpenseList;
 window.filterExpenseList = filterExpenseList;
 window.showExpenseDetail = showExpenseDetail;
 window.showExpenseForm = showExpenseForm;
+window.quickAddAmpayeo = quickAddAmpayeo;
+window.saveAmpayeo = saveAmpayeo;
 window.confirmDeleteExpense = confirmDeleteExpense;
 window.deleteExpense = deleteExpense;
 window.showPhotoUploadForm = showPhotoUploadForm;

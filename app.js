@@ -4641,16 +4641,38 @@ function reloadCurrentScreen() {
   }
 }
 
+// Fix para Android Honor/MagicOS: usar pointerdown como fallback
+// y click normal. Ambos llaman a showScreen para máxima compatibilidad.
+let lastNavTap = 0;
 navItems.forEach(btn => {
-  btn.addEventListener('click', () => showScreen(btn.dataset.screen));
+  const handler = (e) => {
+    // Debounce para evitar double-fire de pointerdown + click
+    const now = Date.now();
+    if (now - lastNavTap < 300) return;
+    lastNavTap = now;
+    e.preventDefault();
+    e.stopPropagation();
+    showScreen(btn.dataset.screen);
+  };
+  btn.addEventListener('click', handler, { passive: false });
+  // Pointerdown como fallback para dispositivos con touch event quirks
+  btn.addEventListener('pointerdown', handler, { passive: false });
 });
 
 // FAB: diferentes acciones según la pantalla
-document.getElementById('fabAdd').addEventListener('click', () => {
+let lastFabTap = 0;
+const fabHandler = (e) => {
+  const now = Date.now();
+  if (now - lastFabTap < 300) return;
+  lastFabTap = now;
+  e.preventDefault();
+  e.stopPropagation();
   if (state.currentScreen === 'roster') showPlayerForm();
   else if (state.currentScreen === 'calendario') showGameForm();
   else if (state.currentScreen === 'tesoreria') showFabPicker();
-});
+};
+document.getElementById('fabAdd').addEventListener('click', fabHandler, { passive: false });
+document.getElementById('fabAdd').addEventListener('pointerdown', fabHandler, { passive: false });
 
 // Exponer funciones globales (para onclick)
 window.showPlayerDetail = showPlayerDetail;

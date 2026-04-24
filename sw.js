@@ -10,7 +10,7 @@
 
 // IMPORTANTE: cambiar este número cada vez que haya cambios grandes
 // para que los usuarios reciban la versión nueva automáticamente.
-const CACHE_VERSION = 'v17';
+const CACHE_VERSION = 'v18';
 const STATIC_CACHE = `tazos-static-${CACHE_VERSION}`;
 const IMAGE_CACHE = `tazos-images-${CACHE_VERSION}`;
 

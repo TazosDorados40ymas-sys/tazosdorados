@@ -1095,6 +1095,37 @@ function renderPlayerForm(p) {
           <label class="form-label">Fecha de nacimiento</label>
           <input type="date" class="form-input" id="fechaNacimiento" value="${p?.fecha_nacimiento || ''}">
         </div>
+
+        ${!isEdit ? `
+        <!-- SECCIÓN DE ACCESO A LA APP — solo para jugadores nuevos -->
+        <div class="form-section-divider">
+          <span>🔐 ACCESO A LA APP</span>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" id="createAccountCheckbox" checked onchange="togglePlayerAccountFields()">
+            <span class="checkbox-row-label">
+              <strong>Crear cuenta ahora</strong>
+              <div class="form-hint" style="margin-top: 2px;">El jugador podrá entrar a la app con email y password</div>
+            </span>
+          </label>
+        </div>
+
+        <div id="accountFields">
+          <div class="form-group">
+            <label class="form-label">Email (auto-generado)</label>
+            <input type="email" class="form-input" id="newPlayerEmail" autocapitalize="none" style="font-family: monospace; font-size: 13px;" placeholder="se genera al escribir número y apodo/nombre">
+            <div class="form-hint">Editable. Si prefieres el email real del jugador, ponlo aquí.</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Password temporal (auto-generado)</label>
+            <input type="text" class="form-input" id="newPlayerPassword" autocapitalize="none" style="font-family: monospace; font-size: 14px; letter-spacing: 1px;">
+            <div class="form-hint">El jugador podrá cambiarlo después.</div>
+          </div>
+        </div>
+        ` : ''}
       </form>
     </div>
     <div class="modal-footer">
@@ -1108,6 +1139,64 @@ function renderPlayerForm(p) {
     document.getElementById('avatarInput').click();
   });
   document.getElementById('avatarInput').addEventListener('change', handleAvatarUpload);
+
+  // Si es nuevo jugador, inicializar campos de cuenta
+  if (!isEdit) {
+    // Generar password aleatorio al abrir el formulario
+    const pwField = document.getElementById('newPlayerPassword');
+    if (pwField) pwField.value = generateTempPassword();
+
+    // Listeners para auto-generar email cuando cambian número/apodo/nombre
+    const numeroInput = document.getElementById('numero');
+    const apodoInput = document.getElementById('apodo');
+    const nombreInput = document.getElementById('nombre');
+
+    const updateEmailPreview = () => {
+      const checkbox = document.getElementById('createAccountCheckbox');
+      if (!checkbox || !checkbox.checked) return;
+
+      const emailField = document.getElementById('newPlayerEmail');
+      if (!emailField) return;
+
+      // Solo auto-generar si el usuario NO ha modificado manualmente el email
+      // (para no sobreescribir lo que él puso)
+      if (emailField.dataset.manuallyEdited === 'true') return;
+
+      const numero = numeroInput.value;
+      const apodo = apodoInput.value.trim();
+      const nombre = nombreInput.value.trim();
+
+      // Usar apodo, si no hay, primer nombre
+      let base = (apodo || nombre.split(' ')[0] || '').toLowerCase();
+      base = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      base = base.replace(/[^a-z0-9]/g, '');
+
+      if (numero !== '' && base) {
+        const numeroPadded = String(parseInt(numero) || 0).padStart(2, '0');
+        emailField.value = `${numeroPadded}${base}@tazosdorados.app`;
+      }
+    };
+
+    numeroInput.addEventListener('input', updateEmailPreview);
+    apodoInput.addEventListener('input', updateEmailPreview);
+    nombreInput.addEventListener('input', updateEmailPreview);
+
+    // Si el usuario edita manualmente el email, no sobrescribir después
+    const emailField = document.getElementById('newPlayerEmail');
+    if (emailField) {
+      emailField.addEventListener('input', () => {
+        emailField.dataset.manuallyEdited = 'true';
+      });
+    }
+  }
+}
+
+// Toggle para mostrar/ocultar campos de cuenta
+function togglePlayerAccountFields() {
+  const checkbox = document.getElementById('createAccountCheckbox');
+  const fields = document.getElementById('accountFields');
+  if (!checkbox || !fields) return;
+  fields.style.display = checkbox.checked ? 'block' : 'none';
 }
 
 async function handleAvatarUpload(e) {
@@ -1180,6 +1269,29 @@ async function savePlayer() {
     return;
   }
 
+  // Leer datos de cuenta si aplica (solo para jugadores nuevos)
+  const isNew = !id;
+  const accountCheckbox = document.getElementById('createAccountCheckbox');
+  const createAccount = isNew && accountCheckbox && accountCheckbox.checked;
+
+  let accountEmail = '';
+  let accountPassword = '';
+
+  if (createAccount) {
+    accountEmail = document.getElementById('newPlayerEmail').value.trim();
+    accountPassword = document.getElementById('newPlayerPassword').value.trim();
+
+    if (!accountEmail || !accountPassword) {
+      errorDiv.innerHTML = '<div class="form-error">Completa email y password (o desmarca la casilla de crear cuenta)</div>';
+      return;
+    }
+
+    if (accountPassword.length < 6) {
+      errorDiv.innerHTML = '<div class="form-error">Password muy corto (mínimo 6 caracteres)</div>';
+      return;
+    }
+  }
+
   saveBtn.disabled = true;
   saveBtn.textContent = 'Guardando...';
   errorDiv.innerHTML = '';
@@ -1194,17 +1306,109 @@ async function savePlayer() {
   if (!id) payload.activo = true;
 
   try {
+    // PASO 1: Guardar el jugador (nuevo o editar)
     let result;
-    if (id) result = await db.from('players').update(payload).eq('id', id);
-    else result = await db.from('players').insert(payload);
+    let newPlayerId = id;
+
+    if (id) {
+      result = await db.from('players').update(payload).eq('id', id);
+    } else {
+      result = await db.from('players').insert(payload).select('id').single();
+      if (result.data) newPlayerId = result.data.id;
+    }
     if (result.error) throw result.error;
-    closeModal();
-    await loadRoster();
+
+    // PASO 2: Si es nuevo y pidió cuenta, crear la cuenta
+    if (createAccount && newPlayerId) {
+      saveBtn.textContent = 'Creando cuenta...';
+
+      try {
+        await createAccountForNewPlayer(newPlayerId, accountEmail, accountPassword, nombre, apodo);
+        // createAccountForNewPlayer ya muestra la pantalla de credenciales
+        // No cerramos modal aquí
+        await loadRoster();  // refrescar en background para cuando vuelva
+      } catch (accErr) {
+        // El jugador SÍ se creó, pero la cuenta falló
+        // Avisar al tesorero para que cree la cuenta después
+        let accMsg = accErr.message || 'Error desconocido';
+        if (accMsg.includes('already registered') || accMsg.includes('already been registered')) {
+          accMsg = 'Ese email ya está registrado. El jugador quedó guardado pero sin cuenta. Puedes crearla después con otro email desde "Gestionar accesos".';
+        }
+        // Mostrar modal de advertencia
+        modalContent.innerHTML = `
+          <div class="modal-header">
+            <h2>⚠️ JUGADOR GUARDADO</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div style="text-align: center; margin-bottom: 14px;">
+              <div style="font-size: 42px;">⚠️</div>
+              <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 2px; margin-top: 6px;">
+                ${escapeHtml(apodo || nombre)} SE AGREGÓ AL ROSTER
+              </div>
+            </div>
+            <div class="form-error" style="text-align: left;">
+              <strong>Pero la cuenta no se pudo crear:</strong><br><br>
+              ${escapeHtml(accMsg)}<br><br>
+              <em>Puedes intentar crear la cuenta después desde Cuentas → Gestionar accesos.</em>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" style="width: 100%;" onclick="closeModal()">Entendido</button>
+          </div>`;
+        await loadRoster();
+      }
+    } else {
+      // Sin crear cuenta: comportamiento normal (solo cerrar modal)
+      closeModal();
+      await loadRoster();
+    }
   } catch (err) {
     errorDiv.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
     saveBtn.disabled = false;
     saveBtn.textContent = 'Guardar';
   }
+}
+
+// Crea la cuenta Auth y la vincula con el jugador recién creado
+async function createAccountForNewPlayer(playerId, email, password, nombre, apodo) {
+  // Guardamos el state del tesorero actual
+  const tesoreroSession = await db.auth.getSession();
+
+  // PASO 1: Crear usuario en Auth (signUp desloguea al tesorero temporalmente)
+  const { data: authData, error: authError } = await db.auth.signUp({
+    email: email,
+    password: password,
+    options: { emailRedirectTo: undefined }
+  });
+
+  if (authError) throw authError;
+  if (!authData.user) throw new Error('No se pudo crear el usuario');
+
+  const newUserId = authData.user.id;
+
+  // PASO 2: Re-loguearnos como tesorero
+  if (tesoreroSession.data.session) {
+    await db.auth.setSession({
+      access_token: tesoreroSession.data.session.access_token,
+      refresh_token: tesoreroSession.data.session.refresh_token
+    });
+  }
+
+  // PASO 3: Vincular usuario con jugador en player_accounts
+  const { error: linkError } = await db.from('player_accounts').insert({
+    player_id: playerId,
+    user_id: newUserId,
+    email: email,
+    activo: true
+  });
+
+  if (linkError) {
+    throw new Error(`Usuario creado pero no se vinculó: ${linkError.message}`);
+  }
+
+  // ÉXITO: mostrar pantalla de credenciales + WhatsApp (reutilizamos la función existente)
+  await showCredentialsScreen(playerId, email, password);
 }
 
 function confirmDeactivate(playerId) {
@@ -4451,6 +4655,7 @@ document.getElementById('fabAdd').addEventListener('click', () => {
 // Exponer funciones globales (para onclick)
 window.showPlayerDetail = showPlayerDetail;
 window.showPlayerForm = showPlayerForm;
+window.togglePlayerAccountFields = togglePlayerAccountFields;
 window.showGameDetail = showGameDetail;
 window.showGameForm = showGameForm;
 window.showCaptureResult = showCaptureResult;

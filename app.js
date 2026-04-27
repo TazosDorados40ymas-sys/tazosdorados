@@ -143,11 +143,13 @@ const modalContent = document.getElementById('modalContent');
 function openModal(html) {
   modalContent.innerHTML = html;
   modalBackdrop.classList.add('show');
+  document.body.classList.add('modal-open');
   document.body.style.overflow = 'hidden';
 }
 
 function closeModal() {
   modalBackdrop.classList.remove('show');
+  document.body.classList.remove('modal-open');
   document.body.style.overflow = '';
 }
 
